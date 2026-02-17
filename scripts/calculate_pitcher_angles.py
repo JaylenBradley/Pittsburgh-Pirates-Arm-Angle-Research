@@ -360,15 +360,15 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, start_joint='should
         print()
 
     # Print overall summary
-    print(f"{'=' * 60}")
+    print(f"{'=' * 50}")
     print(f"OVERALL SUMMARY")
-    print(f"{'=' * 60}")
+    print(f"{'=' * 50}")
     print(f"Videos:     {len(video_dirs)}")
     print(f"Frames:     {total_frames}")
     print(f"Calculated: {total_processed}")
     print(f"Skipped:    {total_skipped}")
     print(f"Failed:     {total_failed}")
-    print(f"{'=' * 60}\n")
+    print(f"{'=' * 50}\n")
 
     # Calculate average error if any frames were processed
     if total_processed > 0:

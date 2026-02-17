@@ -65,6 +65,25 @@ def process_frame(frame_path, video_dir, det_model, pose_model, dataset, dataset
     if not force and pose_utils.check_output_exists(video_dir, output_frame_name, 'poses'):
         return True, "Already processed"
 
+    # Validate image file before processing
+    if not frame_path.exists():
+        return False, "Image file does not exist"
+
+    file_size = frame_path.stat().st_size
+    if file_size == 0:
+        return False, "Image file is empty (0 bytes) - likely iCloud placeholder or corrupted. Run: python scripts/check_icloud_files.py --download"
+
+    if file_size < 100:
+        return False, f"Image file is too small ({file_size} bytes) - likely iCloud placeholder or corrupted"
+
+    # Try to read the image with OpenCV
+    try:
+        test_image = cv2.imread(str(frame_path))
+        if test_image is None:
+            return False, "Image file is corrupted or iCloud placeholder (OpenCV cannot read it). Run: python scripts/check_icloud_files.py --download"
+    except Exception as e:
+        return False, f"Failed to read image: {str(e)}"
+
     # Create output directory
     output_dir = video_dir / 'poses' / output_frame_name
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -164,9 +183,9 @@ def process_all_videos(baseball_vids_dir, det_model, pose_model, dataset, datase
         print(f"  Make sure videos have been extracted using extract_video_frames.py")
         return
 
-    print(f"\n{'=' * 60}")
+    print(f"\n{'=' * 50}")
     print(f"Found {len(video_dirs)} video(s) to process")
-    print(f"{'=' * 60}\n")
+    print(f"{'=' * 50}\n")
 
     total_processed = 0
     total_skipped = 0
@@ -223,15 +242,15 @@ def process_all_videos(baseball_vids_dir, det_model, pose_model, dataset, datase
         print()
 
     # Print overall summary
-    print(f"{'=' * 60}")
+    print(f"{'=' * 50}")
     print(f"OVERALL SUMMARY")
-    print(f"{'=' * 60}")
+    print(f"{'=' * 50}")
     print(f"Videos:    {len(video_dirs)}")
     print(f"Frames:    {total_frames}")
     print(f"Processed: {total_processed}")
     print(f"Skipped:   {total_skipped}")
     print(f"Failed:    {total_failed}")
-    print(f"{'=' * 60}\n")
+    print(f"{'=' * 50}\n")
 
 
 def main():
