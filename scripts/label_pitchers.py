@@ -30,7 +30,6 @@ Example:
 """
 
 import sys
-import os
 from pathlib import Path
 from argparse import ArgumentParser
 import cv2
@@ -272,8 +271,14 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, labeler, f
     poses_data = pose_utils.load_json(poses_json)
     persons_data = poses_data.get('persons', [])
 
-    # Load image
-    image = cv2.imread(str(frame_path))
+    # Load the visualization image from poses directory (has keypoints already drawn)
+    poses_vis_img = poses_dir / f"{poses_frame_name}.jpg"
+    if poses_vis_img.exists():
+        image = cv2.imread(str(poses_vis_img))
+    else:
+        # Fallback to original image
+        image = cv2.imread(str(frame_path))
+
     if image is None:
         return False, "Failed to load image", False
 
@@ -297,7 +302,7 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, labeler, f
             'pitcher_person_id': None
         }
         pose_utils.save_json(output_data, output_dir / 'data.json')
-        return True, "No pitcher detected (marked)", False
+        return "skip", "No pitcher detected", False
 
     # Get pitcher data
     pitcher_data = persons_data[selected_person_idx]
@@ -359,6 +364,14 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, labeler, f
     # Save JSON
     pose_utils.save_json(output_data, output_dir / 'data.json')
 
+    # Load the visualization image that already has pose keypoints drawn
+    poses_vis_img = poses_dir / f"{poses_frame_name}.jpg"
+    if poses_vis_img.exists():
+        vis_image = cv2.imread(str(poses_vis_img))
+    else:
+        # Fallback - use the image we already loaded
+        vis_image = image.copy()
+
     # Create and save cropped pitcher image with keypoints
     bbox = pitcher_data['bbox']
     x1, y1 = int(bbox['x1']), int(bbox['y1'])
@@ -368,22 +381,13 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, labeler, f
     pad = 50
     x1 = max(0, x1 - pad)
     y1 = max(0, y1 - pad)
-    x2 = min(image.shape[1], x2 + pad)
-    y2 = min(image.shape[0], y2 + pad)
+    x2 = min(vis_image.shape[1], x2 + pad)
+    y2 = min(vis_image.shape[0], y2 + pad)
 
-    # Crop and draw keypoints
-    crop = image[y1:y2, x1:x2].copy()
+    # Crop the visualization image (which already has keypoints drawn)
+    crop = vis_image[y1:y2, x1:x2].copy()
 
-    # Draw keypoints on crop (adjusted for crop coordinates)
-    keypoints = np.array(pitcher_data['keypoints'])
-    for kpt in keypoints:
-        if kpt[2] > 0.3:  # Confidence threshold
-            kpt_x = int(kpt[0] - x1)
-            kpt_y = int(kpt[1] - y1)
-            if 0 <= kpt_x < crop.shape[1] and 0 <= kpt_y < crop.shape[0]:
-                cv2.circle(crop, (kpt_x, kpt_y), 3, (0, 255, 0), -1)
-
-    # Draw bounding box
+    # Draw bounding box around the pitcher
     cv2.rectangle(crop, (5, 5), (crop.shape[1] - 5, crop.shape[0] - 5), (0, 255, 0), 2)
 
     # Save image
@@ -447,29 +451,28 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, force=False):
                 )
 
                 if quit_flag:
-                    print(f"    Quitting...")
+                    print(f"Quitting...")
                     should_quit = True
                     break
 
-                if success:
-                    if message == "Already labeled":
-                        video_skipped += 1
-                        total_skipped += 1
-                        print(f"    SKIPPED")
-                    else:
-                        video_processed += 1
-                        total_processed += 1
-                        print(f"    ✓ {message}")
+                if success == "skip" or (success and message == "Already labeled"):
+                    video_skipped += 1
+                    total_skipped += 1
+                    print(f"SKIPPED: {message}")
+                elif success:
+                    video_processed += 1
+                    total_processed += 1
+                    print(f"{message}")
                 else:
                     video_failed += 1
                     total_failed += 1
-                    print(f"    ✗ {message}")
+                    print(f"{message}")
             except Exception as e:
                 video_failed += 1
                 total_failed += 1
-                print(f"    ✗ Error: {str(e)}")
+                print(f"Error: {str(e)}")
 
-        print(f"  Video summary: {video_processed} processed, {video_skipped} skipped, {video_failed} failed")
+        print(f"Video summary: {video_processed} processed, {video_skipped} skipped, {video_failed} failed")
         print()
 
         if should_quit:
@@ -479,11 +482,11 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, force=False):
     print(f"{'=' * 50}")
     print(f"OVERALL SUMMARY")
     print(f"{'=' * 50}")
-    print(f"Videos:    {len(video_dirs)}")
-    print(f"Frames:    {total_frames}")
-    print(f"Labeled:   {total_processed}")
-    print(f"Skipped:   {total_skipped}")
-    print(f"Failed:    {total_failed}")
+    print(f"Videos:  {len(video_dirs)}")
+    print(f"Frames:  {total_frames}")
+    print(f"Labeled: {total_processed}")
+    print(f"Skipped: {total_skipped}")
+    print(f"Failed:  {total_failed}")
     print(f"{'=' * 50}\n")
 
 

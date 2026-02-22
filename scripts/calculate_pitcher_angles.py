@@ -117,13 +117,13 @@ def draw_angle_on_image(image, pitcher_data, ground_truth_angle, start_joint='sh
 
     # Position text in upper portion of image
     y_offset = 40
-    cv2.putText(img, f"Ground Truth: {ground_truth_angle:.2f}°",
+    cv2.putText(img, f"Ground Truth: {ground_truth_angle:.2f}",
                 (20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
 
-    cv2.putText(img, f"Predicted ({joint_label}-Wrist): {predicted_angle:.2f}°",
+    cv2.putText(img, f"Predicted ({joint_label}-Wrist): {predicted_angle:.2f}",
                 (20, y_offset + 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 255), 3)
 
-    cv2.putText(img, f"Error: {error:.2f}°",
+    cv2.putText(img, f"Error: {error:.2f}",
                 (20, y_offset + 100), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
 
     cv2.putText(img, f"Arm: {arm_side.upper()}",
@@ -252,7 +252,7 @@ def calculate_frame_angle(frame_path, video_dir, video_id, ground_truth_data,
     except Exception as e:
         return False, f"Failed to create visualization: {str(e)}"
 
-    return True, f"Calculated (angle={angle:.2f}°, GT={ground_truth_angle:.2f}°, error={error:.2f}°)"
+    return True, f"Calculated (angle={angle:.2f}, GT={ground_truth_angle:.2f}, error={error:.2f})"
 
 
 def process_all_videos(baseball_vids_dir, ground_truth_data, start_joint='shoulder', force=False):
@@ -396,9 +396,9 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, start_joint='should
             min_error = min(errors)
             max_error = max(errors)
             print(f"\nError Statistics ({len(errors)} frames):")
-            print(f"  Average error: {avg_error:.2f}°")
-            print(f"  Min error:     {min_error:.2f}°")
-            print(f"  Max error:     {max_error:.2f}°")
+            print(f"  Average error: {avg_error:.2f}")
+            print(f"  Min error:     {min_error:.2f}")
+            print(f"  Max error:     {max_error:.2f}")
             print()
 
 

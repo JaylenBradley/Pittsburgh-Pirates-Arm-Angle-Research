@@ -6,20 +6,24 @@ For each video, it:
 1. Creates a subdirectory named after the video (without extension)
 2. Extracts all frames to a 'all_frames' subdirectory using ffmpeg
 3. Creates an empty 'release_frames' subdirectory for manual frame selection
+4. AUTOMATICALLY DELETES the original video file after successful frame extraction
 
 Usage:
-    python scripts/extract_video_frames.py [--videos-dir PATH]
+    python scripts/extract_video_frames.py [--videos-dir PATH] [OPTIONS]
 
 Arguments:
     --videos-dir: Optional path to the videos directory (default: ~/Desktop/baseball_vids)
     --force: Force reprocessing of already-processed videos
+    --keep-videos: Keep original video files instead of deleting them after extraction
 
 Example:
     python scripts/extract_video_frames.py
     python scripts/extract_video_frames.py --videos-dir /path/to/videos
     python scripts/extract_video_frames.py --force
+    python scripts/extract_video_frames.py --keep-videos  # Preserve original videos
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,11 +39,11 @@ def check_ffmpeg_installed():
             text=True,
             check=True,
         )
-        print(f"✓ FFmpeg found: {result.stdout.split()[2]}")
+        print(f"FFmpeg found: {result.stdout.split()[2]}")
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
-        print("✗ FFmpeg not found. Please install ffmpeg:")
-        print("  brew install ffmpeg")
+        print("FFmpeg not found. Please install ffmpeg:")
+        print("brew install ffmpeg")
         return False
 
 
@@ -124,14 +128,30 @@ def extract_frames(video_path, output_dir):
         error_msg = f"FFmpeg error: {e.stderr}"
         return False, 0, error_msg
 
+def delete_video(video_path):
+    """
+    Delete a video file after successful frame extraction.
 
-def process_videos(videos_dir, force=False):
+    Args:
+        video_path: Path to the video file to delete
+
+    Returns:
+        tuple: (success: bool, error_message: str or None)
+    """
+    try:
+        os.remove(video_path)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def process_videos(videos_dir, force=False, keep_videos=False):
     """
     Process all videos in the videos directory.
 
     Args:
         videos_dir: Path to directory containing video files
         force: If True, reprocess already-processed videos
+        keep_videos: If True, keep original video files after extraction
     """
 
     videos_dir = Path(videos_dir)
@@ -145,7 +165,7 @@ def process_videos(videos_dir, force=False):
     video_files = get_video_files(videos_dir)
 
     if not video_files:
-        print(f"✗ No mp4 video files found in: {videos_dir}")
+        print(f"No mp4 video files found in: {videos_dir}")
         return
 
     print(f"\n{'=' * 50}")
@@ -155,6 +175,7 @@ def process_videos(videos_dir, force=False):
     processed_count = 0
     skipped_count = 0
     failed_count = 0
+    deleted_count = 0
 
     for i, video_path in enumerate(video_files, 1):
         video_name = video_path.stem
@@ -164,7 +185,7 @@ def process_videos(videos_dir, force=False):
         already_processed, existing_frames = is_already_processed(video_path, videos_dir)
 
         if already_processed and not force:
-            print(f"  Skipping (already processed: {existing_frames} frames)")
+            print(f"Skipping (already processed: {existing_frames} frames)")
             skipped_count += 1
             print()
             continue
@@ -188,6 +209,17 @@ def process_videos(videos_dir, force=False):
         if success:
             print(f"Extracted {frame_count} frames")
             processed_count += 1
+
+            # Delete the original video file if requested (default behavior)
+            if not keep_videos:
+                print(f"Deleting original video file...")
+                delete_success, delete_error = delete_video(video_path)
+                if delete_success:
+                    print(f"Deleted: {video_path.name}")
+                    deleted_count += 1
+                else:
+                    print(f"Failed to delete video: {delete_error}")
+
         else:
             print(f"Failed to extract frames")
             print(f"Error: {error_msg}")
@@ -202,6 +234,8 @@ def process_videos(videos_dir, force=False):
     print(f"Processed: {processed_count}")
     print(f"Skipped:   {skipped_count}")
     print(f"Failed:    {failed_count}")
+    if not keep_videos:
+        print(f"Deleted:   {deleted_count}")
     print(f"Total:     {len(video_files)}")
     print(f"{'=' * 50}\n")
 
@@ -220,6 +254,11 @@ def main():
         "--force",
         action="store_true",
         help="Force reprocessing of already-processed videos"
+    )
+    parser.add_argument(
+        "--keep-videos",
+        action="store_true",
+        help="Keep original video files after extraction (default: delete them)"
     )
 
     args = parser.parse_args()
@@ -242,7 +281,7 @@ def main():
         sys.exit(1)
 
     # Process videos
-    process_videos(videos_dir, force=args.force)
+    process_videos(videos_dir, force=args.force, keep_videos=args.keep_videos)
 
 
 if __name__ == "__main__":
