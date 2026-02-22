@@ -56,9 +56,9 @@ def run_command(cmd, description):
     Returns:
         True if successful, False otherwise
     """
-    print(f"\n{'=' * 70}")
+    print(f"\n{'=' * 50}")
     print(f"{description}")
-    print(f"{'=' * 70}")
+    print(f"{'=' * 50}")
     print(f"Command: {' '.join(cmd)}\n")
 
     try:
@@ -155,9 +155,9 @@ def main():
         sys.exit(1)
 
     # Print configuration
-    print(f"\n{'=' * 70}")
+    print(f"\n{'=' * 50}")
     print(f"FULL PIPELINE CONFIGURATION")
-    print(f"{'=' * 70}")
+    print(f"{'=' * 50}")
     print(f"Baseball videos directory: {baseball_vids_dir}")
     print(f"Ground truth CSV: {csv_path}")
     print(f"Start joint: {args.start_joint}")
@@ -168,7 +168,7 @@ def main():
     print(f"  2. Pitcher labeling: {'SKIP' if args.skip_labeling else 'RUN'}")
     print(f"  3. Angle calculation: {'SKIP' if args.skip_angles else 'RUN'}")
     print(f"  4. CSV generation: {'SKIP' if args.skip_csv else 'RUN'}")
-    print(f"{'=' * 70}\n")
+    print(f"{'=' * 50}\n")
 
     # Confirm before starting
     try:
@@ -190,7 +190,6 @@ def main():
             sys.executable,
             str(scripts_dir / "process_release_frames.py"),
             "--videos-dir", str(baseball_vids_dir),
-            "--device", args.device
         ]
         if args.force:
             cmd.append("--force")
@@ -210,7 +209,6 @@ def main():
             sys.executable,
             str(scripts_dir / "label_pitchers.py"),
             "--videos-dir", str(baseball_vids_dir),
-            "--device", args.device
         ]
         if args.force:
             cmd.append("--force")
@@ -265,9 +263,9 @@ def main():
         total_stages -= 1
 
     # Final summary
-    print(f"\n{'=' * 70}")
+    print(f"\n{'=' * 50}")
     print(f"PIPELINE COMPLETE")
-    print(f"{'=' * 70}")
+    print(f"{'=' * 50}")
     print(f"Stages completed: {success_count}/{total_stages}")
 
     if success_count == total_stages:
@@ -279,7 +277,7 @@ def main():
     else:
         print(f"\n⚠ Some stages were skipped or failed")
 
-    print(f"{'=' * 70}\n")
+    print(f"{'=' * 50}\n")
 
 
 if __name__ == "__main__":

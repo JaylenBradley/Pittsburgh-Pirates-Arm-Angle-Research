@@ -488,9 +488,9 @@ def main():
     write_summary_csv(shoulder_stats, elbow_stats, output_path)
 
     # Print statistics to terminal
-    print(f"\n{'=' * 70}")
+    print(f"\n{'=' * 50}")
     print(f"SUMMARY STATISTICS")
-    print(f"{'=' * 70}")
+    print(f"{'=' * 50}")
 
     for stats in [shoulder_stats, elbow_stats]:
         if not stats:
@@ -511,7 +511,7 @@ def main():
         print(f"  % Within 3 Degrees:        {stats['pct_within_3_degrees']:.1f}%")
         print(f"  % Within 8 Degrees:        {stats['pct_within_8_degrees']:.1f}%")
 
-    print(f"{'=' * 70}\n")
+    print(f"{'=' * 50}\n")
 
     # Generate plots if requested
     if args.plot:

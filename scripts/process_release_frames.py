@@ -24,7 +24,6 @@ Example:
 """
 
 import sys
-import os
 from pathlib import Path
 from argparse import ArgumentParser
 import cv2
