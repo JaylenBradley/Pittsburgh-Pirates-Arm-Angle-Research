@@ -32,14 +32,11 @@ Examples:
 """
 
 import sys
-import os
 from pathlib import Path
 from argparse import ArgumentParser
 import cv2
-import numpy as np
 import math
 
-# Import our utilities
 import pose_utils
 
 
@@ -169,7 +166,7 @@ def calculate_frame_angle(frame_path, video_dir, video_id, ground_truth_data,
 
     # Check if pitcher was detected
     if pitcher_data.get('pitcher_detected') == False:
-        return False, "No pitcher detected in frame (skipping)"
+        return "skip", "No pitcher detected in frame"
 
     # Get ground truth for this video
     if video_id not in ground_truth_data:
@@ -338,23 +335,22 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, start_joint='should
                     start_joint=start_joint, force=force
                 )
 
-                if success:
-                    if message == "Already calculated":
-                        video_skipped += 1
-                        total_skipped += 1
-                        print("SKIPPED")
-                    else:
-                        video_processed += 1
-                        total_processed += 1
-                        print(f"✓ {message}")
+                if success == "skip" or (success and message == "Already calculated"):
+                    video_skipped += 1
+                    total_skipped += 1
+                    print(f"{message}")
+                elif success:
+                    video_processed += 1
+                    total_processed += 1
+                    print(f"{message}")
                 else:
                     video_failed += 1
                     total_failed += 1
-                    print(f"✗ {message}")
+                    print(f"{message}")
             except Exception as e:
                 video_failed += 1
                 total_failed += 1
-                print(f"✗ Error: {str(e)}")
+                print(f"Error: {str(e)}")
 
         print(f"  Video summary: {video_processed} processed, {video_skipped} skipped, {video_failed} failed")
         print()
