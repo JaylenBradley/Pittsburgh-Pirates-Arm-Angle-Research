@@ -172,7 +172,7 @@ def main():
 
     # Confirm before starting
     try:
-        response = input("Continue with pipeline? [y/N]: ")
+        response = input("Continue with pipeline? [Y/N]: ")
         if response.lower() != 'y':
             print("Pipeline cancelled.")
             sys.exit(0)
