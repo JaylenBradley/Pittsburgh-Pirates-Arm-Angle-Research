@@ -14,7 +14,7 @@ Usage:
 Arguments:
     --videos-dir PATH: Path to baseball_vids directory (default: ~/Desktop/baseball_vids)
     --csv PATH: Path to ground truth CSV (default: baseball_vids/arm_angles_high_speed.csv)
-    --start-joint JOINT: Joint to start angle measurement (default: shoulder, options: shoulder, elbow)
+    --start-joint JOINT: Joint to start angle measurement (default: shoulder, options: shoulder, elbow, both)
     --device DEVICE: Device for inference (default: cpu)
     --force: Force reprocessing of all stages
     --skip-poses: Skip pose extraction stage (if already done)
