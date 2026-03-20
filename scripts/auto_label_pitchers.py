@@ -8,8 +8,8 @@ For each frame in release_frames/, it:
 1. Loads all detected persons from poses/FRAME_NAME_poses/data.json
 2. Filters out low-quality detections (bad bbox or insufficient upper-body keypoints)
 3. Crops each valid person with 10% bbox padding
-4. Scores each crop with CLIP using pitcher/non-pitcher text prompts
-5. Selects one pitcher candidate or marks frame as no pitcher detected
+4. Scores each crop with CLIP using pitcher-focused text prompts
+5. Selects the top pitcher candidate or marks frame as no pitcher detected
 6. Saves output to pitcher_labels/FRAME_NAME_pitcher/data.json
 
 The output JSON structure is kept compatible with calculate_pitcher_angles.py.
@@ -28,14 +28,12 @@ Arguments:
                        (default: openai/clip-vit-base-patch32)
     --clip-device DEVICE: Device for CLIP inference (cpu, cuda, mps, auto)
                           (default: auto)
-    --min-keypoint-confidence FLOAT: Min confidence for upper-body keypoint
-                                     validity (default: 0.25)
+    --min-keypoint-confidence FLOAT: Minimum confidence for upper-body keypoint validity
+                                     (default: 0.20)
     --min-upper-body-points INT: Min number of upper-body keypoints required
                                  (default: 4)
-    --min-pitcher-score FLOAT: Min CLIP pitcher probability for selection
+    --min-pitcher-score FLOAT: Min CLIP pitcher probability threshold
                                (default: 0.55)
-    --min-score-gap FLOAT: Min score gap between top-1 and top-2 candidate
-                           (default: 0.08)
 
 Examples:
     python scripts/auto_label_pitchers.py
@@ -68,22 +66,26 @@ UPPER_BODY_KEYPOINT_NAMES = [
 UPPER_BODY_KEYPOINT_INDICES = [pose_utils.KEYPOINT_NAMES.get(name) for name in UPPER_BODY_KEYPOINT_NAMES
                                if pose_utils.KEYPOINT_NAMES.get(name) is not None]
 
+# COCO-WholeBody hand ranges in the 133-keypoint format.
+LEFT_HAND_RANGE = range(91, 112)
+RIGHT_HAND_RANGE = range(112, 133)
+
 
 class CLIPPitcherSelector:
-    """Selects pitcher candidate from person crops using CLIP similarity."""
+    """Selects the most likely pitcher candidate from person crops using CLIP."""
 
     PITCHER_PROMPTS = [
-        "a baseball pitcher winding up to throw",
-        "a baseball pitcher on the mound",
-        "a baseball player pitching a baseball",
-        "the pitcher in a baseball game"
+        "an image of a baseball pitcher winding up to throw",
+        "an image of a baseball player pitching a baseball",
+        "an image of a pitcher in a baseball game"
     ]
 
     NON_PITCHER_PROMPTS = [
-        "a baseball batter at home plate",
-        "a baseball catcher behind home plate",
-        "a baseball umpire",
-        "a baseball fielder who is not pitching"
+        "an image of a baseball umpire",
+        "an image of a baseball batter",
+        "an image of a baseball catcher",
+        "an image of a baseball player's legs only",
+        "an image of a cropped lower body and legs"
     ]
 
     def __init__(self, model_name='openai/clip-vit-base-patch32', device='auto'):
@@ -125,12 +127,7 @@ class CLIPPitcherSelector:
         return text_features
 
     def score_crop(self, crop_bgr):
-        """
-        Score a crop as pitcher vs non-pitcher.
-
-        Returns:
-            Dict with pitcher_prob, non_pitcher_prob, pitcher_sim, non_pitcher_sim.
-        """
+        """Score a crop as pitcher vs non-pitcher with one absolute threshold."""
         crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
 
         with self.torch.no_grad():
@@ -140,18 +137,16 @@ class CLIPPitcherSelector:
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)
 
             pitcher_sims = image_features @ self._pitcher_text_features.T
-            non_pitcher_sims = image_features @ self._non_pitcher_text_features.T
-
             pitcher_sim = pitcher_sims.mean().item()
+            non_pitcher_sims = image_features @ self._non_pitcher_text_features.T
             non_pitcher_sim = non_pitcher_sims.mean().item()
 
-            # Convert cosine similarities into a binary probability.
             logits = self.torch.tensor([pitcher_sim, non_pitcher_sim], device=self.device) * 10.0
-            probs = self.torch.softmax(logits, dim=0).detach().cpu().numpy()
+            probs = self.torch.softmax(logits, dim=0)
+            pitcher_prob = float(probs[0].item())
 
         return {
-            'pitcher_prob': float(probs[0]),
-            'non_pitcher_prob': float(probs[1]),
+            'pitcher_prob': pitcher_prob,
             'pitcher_sim': float(pitcher_sim),
             'non_pitcher_sim': float(non_pitcher_sim)
         }
@@ -207,6 +202,134 @@ def has_valid_upper_body_keypoints(person_keypoints, min_conf=0.25, min_points=4
             valid_count += 1
 
     return valid_count >= min_points
+
+
+def has_any_valid_keypoints(person_keypoints, min_conf=0.05):
+    """Return True if at least one keypoint has usable x/y/conf values."""
+    if not isinstance(person_keypoints, list):
+        return False
+    for kp in person_keypoints:
+        if not isinstance(kp, (list, tuple)) or len(kp) < 3:
+            continue
+        x, y, conf = kp[0], kp[1], kp[2]
+        if x is not None and y is not None and conf is not None and conf >= min_conf:
+            return True
+    return False
+
+
+def keypoint_is_valid(person_keypoints, idx, min_conf):
+    """Return True when keypoint index exists and has valid x/y/conf."""
+    if idx >= len(person_keypoints):
+        return False
+    kp = person_keypoints[idx]
+    if not isinstance(kp, (list, tuple)) or len(kp) < 3:
+        return False
+    x, y, conf = kp[0], kp[1], kp[2]
+    return x is not None and y is not None and conf is not None and conf >= min_conf
+
+
+def has_valid_throwing_arm_and_hand(person_keypoints, arm_side, min_conf=0.20,
+                                    min_hand_points=1):
+    """Require shoulder-elbow-wrist chain and at least N hand keypoints for arm side."""
+    if not isinstance(person_keypoints, list) or len(person_keypoints) < 17:
+        return False
+
+    if arm_side == 'right':
+        shoulder_idx = pose_utils.KEYPOINT_NAMES['right_shoulder']
+        elbow_idx = pose_utils.KEYPOINT_NAMES['right_elbow']
+        wrist_idx = pose_utils.KEYPOINT_NAMES['right_wrist']
+        hand_range = RIGHT_HAND_RANGE
+    else:
+        shoulder_idx = pose_utils.KEYPOINT_NAMES['left_shoulder']
+        elbow_idx = pose_utils.KEYPOINT_NAMES['left_elbow']
+        wrist_idx = pose_utils.KEYPOINT_NAMES['left_wrist']
+        hand_range = LEFT_HAND_RANGE
+
+    if not keypoint_is_valid(person_keypoints, shoulder_idx, min_conf):
+        return False
+    if not keypoint_is_valid(person_keypoints, elbow_idx, min_conf):
+        return False
+    if not keypoint_is_valid(person_keypoints, wrist_idx, min_conf):
+        return False
+
+    valid_hand = 0
+    for idx in hand_range:
+        if keypoint_is_valid(person_keypoints, idx, min_conf):
+            valid_hand += 1
+            if valid_hand >= min_hand_points:
+                return True
+
+    return False
+
+
+def has_valid_torso_geometry(person_keypoints, min_conf=0.20):
+    """Require shoulder-above-hip torso geometry to reject leg-only boxes."""
+    ls = pose_utils.KEYPOINT_NAMES['left_shoulder']
+    rs = pose_utils.KEYPOINT_NAMES['right_shoulder']
+    lh = pose_utils.KEYPOINT_NAMES['left_hip']
+    rh = pose_utils.KEYPOINT_NAMES['right_hip']
+
+    shoulders = [idx for idx in (ls, rs) if keypoint_is_valid(person_keypoints, idx, min_conf)]
+    hips = [idx for idx in (lh, rh) if keypoint_is_valid(person_keypoints, idx, min_conf)]
+    if len(shoulders) == 0 or len(hips) == 0:
+        return False
+
+    shoulder_y = float(np.mean([person_keypoints[idx][1] for idx in shoulders]))
+    hip_y = float(np.mean([person_keypoints[idx][1] for idx in hips]))
+    return shoulder_y < hip_y
+
+
+def build_keypoint_guided_crop(person_keypoints, arm_side, image_shape, min_conf,
+                               pad_ratio, fallback_bbox):
+    """Build tighter crop from torso/arm/hand keypoints; fall back to detector bbox."""
+    if arm_side == 'right':
+        arm_ids = [
+            pose_utils.KEYPOINT_NAMES['right_shoulder'],
+            pose_utils.KEYPOINT_NAMES['right_elbow'],
+            pose_utils.KEYPOINT_NAMES['right_wrist']
+        ]
+        hand_ids = list(RIGHT_HAND_RANGE)
+    else:
+        arm_ids = [
+            pose_utils.KEYPOINT_NAMES['left_shoulder'],
+            pose_utils.KEYPOINT_NAMES['left_elbow'],
+            pose_utils.KEYPOINT_NAMES['left_wrist']
+        ]
+        hand_ids = list(LEFT_HAND_RANGE)
+
+    torso_ids = [
+        pose_utils.KEYPOINT_NAMES['left_shoulder'],
+        pose_utils.KEYPOINT_NAMES['right_shoulder'],
+        pose_utils.KEYPOINT_NAMES['left_hip'],
+        pose_utils.KEYPOINT_NAMES['right_hip']
+    ]
+
+    points = []
+    for idx in arm_ids + torso_ids + hand_ids:
+        if keypoint_is_valid(person_keypoints, idx, min_conf):
+            points.append((float(person_keypoints[idx][0]), float(person_keypoints[idx][1])))
+
+    # Fallback when there are not enough reliable points.
+    if len(points) < 4:
+        x1, y1, x2, y2 = clamp_bbox_to_image(fallback_bbox, image_shape)
+        return add_relative_padding(x1, y1, x2, y2, image_shape, pad_ratio=max(0.05, pad_ratio * 0.5))
+
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    x1 = int(math.floor(min(xs)))
+    y1 = int(math.floor(min(ys)))
+    x2 = int(math.ceil(max(xs)))
+    y2 = int(math.ceil(max(ys)))
+
+    # Ensure non-zero region then pad and clamp.
+    if x2 <= x1:
+        x2 = x1 + 1
+    if y2 <= y1:
+        y2 = y1 + 1
+
+    bbox_for_crop = {'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2}
+    cx1, cy1, cx2, cy2 = clamp_bbox_to_image(bbox_for_crop, image_shape)
+    return add_relative_padding(cx1, cy1, cx2, cy2, image_shape, pad_ratio=pad_ratio)
 
 
 def save_no_pitcher_label(output_dir, frame_name, reason, metadata=None):
@@ -273,7 +396,7 @@ def extract_pitcher_output(person_data, frame_name, arm_side):
 
 def process_frame(frame_path, video_dir, video_id, ground_truth_data, selector,
                   min_keypoint_conf, min_upper_body_points,
-                  min_pitcher_score, min_score_gap,
+                  min_pitcher_score, min_hand_points, crop_padding, min_bbox_score,
                   force=False):
     """Process one frame and auto-select pitcher using CLIP."""
     poses_frame_name = pose_utils.format_frame_name(frame_path.name, 'poses')
@@ -301,15 +424,18 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, selector,
     if score_image is None:
         return False, 'Failed to load frame image for CLIP scoring'
 
-    # Load image used for saved output crop (prefer pose visualization with keypoints).
-    output_vis_path = poses_dir / f'{poses_frame_name}.jpg'
-    output_vis = cv2.imread(str(output_vis_path))
-    if output_vis is None:
-        output_vis = score_image.copy()
+    # Save the clean crop so CLIP sees and we store the same image content.
+    output_vis = score_image.copy()
 
     if len(persons_data) == 0:
         save_no_pitcher_label(output_dir, frame_path.name, 'No persons detected in pose output')
         return 'skip', 'No persons detected'
+
+    # Determine arm side from CSV pitcher hand when available.
+    arm_side = 'right'
+    if video_id in ground_truth_data:
+        pitcher_hand = ground_truth_data[video_id].get('PitcherHand', 'R')
+        arm_side = 'right' if str(pitcher_hand).upper() == 'R' else 'left'
 
     candidates = []
     for person in persons_data:
@@ -318,15 +444,35 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, selector,
 
         if not isinstance(bbox, dict):
             continue
+        if not has_any_valid_keypoints(keypoints, min_conf=min_keypoint_conf):
+            continue
+
+        bbox_score = float(bbox.get('score', 1.0))
+        if bbox_score < min_bbox_score:
+            continue
+
         if not has_valid_upper_body_keypoints(keypoints, min_conf=min_keypoint_conf,
                                               min_points=min_upper_body_points):
             continue
-
-        x1, y1, x2, y2 = clamp_bbox_to_image(bbox, score_image.shape)
-        if x2 <= x1 or y2 <= y1:
+        if not has_valid_torso_geometry(keypoints, min_conf=min_keypoint_conf):
+            continue
+        if not has_valid_throwing_arm_and_hand(
+                keypoints,
+                arm_side=arm_side,
+                min_conf=min_keypoint_conf,
+                min_hand_points=min_hand_points):
             continue
 
-        px1, py1, px2, py2 = add_relative_padding(x1, y1, x2, y2, score_image.shape, pad_ratio=0.10)
+        px1, py1, px2, py2 = build_keypoint_guided_crop(
+            keypoints,
+            arm_side=arm_side,
+            image_shape=score_image.shape,
+            min_conf=min_keypoint_conf,
+            pad_ratio=crop_padding,
+            fallback_bbox=bbox,
+        )
+        if px2 <= px1 or py2 <= py1:
+            continue
         crop = score_image[py1:py2, px1:px2]
         if crop.size == 0:
             continue
@@ -334,80 +480,65 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, selector,
         scores = selector.score_crop(crop)
         candidates.append({
             'person': person,
-            'bbox_xyxy': (x1, y1, x2, y2),
-            'padded_bbox_xyxy': (px1, py1, px2, py2),
+            'bbox_score': bbox_score,
+            'crop_xyxy': (px1, py1, px2, py2),
             'scores': scores
         })
 
     if not candidates:
         save_no_pitcher_label(output_dir, frame_path.name,
-                              'No valid detections with sufficient skeleton keypoints')
+                              'No valid detections with required arm/hand keypoints')
         return 'skip', 'No valid candidates after skeleton filtering'
 
     candidates.sort(key=lambda c: c['scores']['pitcher_prob'], reverse=True)
     best = candidates[0]
-    second = candidates[1] if len(candidates) > 1 else None
-
     best_prob = best['scores']['pitcher_prob']
-    best_non_prob = best['scores']['non_pitcher_prob']
-    gap = best_prob - (second['scores']['pitcher_prob'] if second else 0.0)
+    best_sim = best['scores']['pitcher_sim']
+    best_non_sim = best['scores']['non_pitcher_sim']
 
     selection_meta = {
         'best_pitcher_prob': best_prob,
-        'best_non_pitcher_prob': best_non_prob,
-        'score_gap_to_second': gap,
+        'best_pitcher_similarity': best_sim,
+        'best_non_pitcher_similarity': best_non_sim,
+        'best_bbox_score': best['bbox_score'],
         'num_candidates': len(candidates),
         'thresholds': {
             'min_pitcher_score': min_pitcher_score,
-            'min_score_gap': min_score_gap
+            'min_bbox_score': min_bbox_score
         }
     }
 
-    if best_prob < min_pitcher_score or gap < min_score_gap or best_prob <= best_non_prob:
+    if best_prob < min_pitcher_score:
         save_no_pitcher_label(
             output_dir,
             frame_path.name,
-            'CLIP uncertain (low confidence or ambiguous top candidates)',
+            'CLIP confidence below pitcher threshold',
             metadata=selection_meta
         )
-        return 'skip', (
-            f"No pitcher detected (best={best_prob:.3f}, gap={gap:.3f}, "
-            f"non={best_non_prob:.3f})"
-        )
+        return 'skip', f"No pitcher detected (best={best_prob:.3f})"
 
     pitcher_person = best['person']
-
-    # Determine arm side from CSV pitcher hand when available.
-    arm_side = 'right'
-    if video_id in ground_truth_data:
-        pitcher_hand = ground_truth_data[video_id].get('PitcherHand', 'R')
-        arm_side = 'right' if str(pitcher_hand).upper() == 'R' else 'left'
 
     output_data = extract_pitcher_output(pitcher_person, frame_path.name, arm_side)
     output_data['clip_selection'] = selection_meta
     pose_utils.save_json(output_data, output_dir / 'data.json')
 
-    # Save cropped pitcher image from pose visualization (with keypoints rendered).
-    x1, y1, x2, y2 = best['bbox_xyxy']
-    px1, py1, px2, py2 = add_relative_padding(x1, y1, x2, y2, output_vis.shape, pad_ratio=0.10)
+    # Save cropped pitcher image from the clean frame.
+    px1, py1, px2, py2 = best['crop_xyxy']
     output_crop = output_vis[py1:py2, px1:px2].copy()
-
-    # Keep a visible border to indicate selected pitcher crop.
-    cv2.rectangle(output_crop, (4, 4), (output_crop.shape[1] - 4, output_crop.shape[0] - 4),
-                  (0, 255, 0), 2)
 
     out_img_path = output_dir / f'{pitcher_frame_name}.jpg'
     cv2.imwrite(str(out_img_path), output_crop)
 
     return True, (
         f"Labeled pitcher (person {pitcher_person['person_id'] + 1}, "
-        f"score={best_prob:.3f}, gap={gap:.3f})"
+        f"score={best_prob:.3f})"
     )
 
 
 def process_all_videos(baseball_vids_dir, ground_truth_data, selector,
                        min_keypoint_conf, min_upper_body_points,
-                       min_pitcher_score, min_score_gap,
+                       min_pitcher_score, min_hand_points, crop_padding, min_bbox_score,
                        force=False):
     """Run CLIP auto-labeling over all videos and release frames."""
     video_dirs = pose_utils.get_video_dirs(baseball_vids_dir)
@@ -454,7 +585,9 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, selector,
                     min_keypoint_conf=min_keypoint_conf,
                     min_upper_body_points=min_upper_body_points,
                     min_pitcher_score=min_pitcher_score,
-                    min_score_gap=min_score_gap,
+                    min_hand_points=min_hand_points,
+                    crop_padding=crop_padding,
+                    min_bbox_score=min_bbox_score,
                     force=force
                 )
 
@@ -524,7 +657,7 @@ def main():
     parser.add_argument(
         '--min-keypoint-confidence',
         type=float,
-        default=0.25,
+        default=0.20,
         help='Min confidence for upper-body keypoint validity'
     )
     parser.add_argument(
@@ -536,14 +669,26 @@ def main():
     parser.add_argument(
         '--min-pitcher-score',
         type=float,
-        default=0.55,
+        default=0.45,
         help='Min CLIP pitcher probability to select a candidate'
     )
     parser.add_argument(
-        '--min-score-gap',
+        '--min-hand-points',
+        type=int,
+        default=1,
+        help='Min detected keypoints for the throwing hand (left/right hand set)'
+    )
+    parser.add_argument(
+        '--crop-padding',
         type=float,
-        default=0.08,
-        help='Min top-1 minus top-2 pitcher score gap'
+        default=0.10,
+        help='Relative padding for keypoint-guided crops (default: 0.10)'
+    )
+    parser.add_argument(
+        '--min-bbox-score',
+        type=float,
+        default=0.60,
+        help='Minimum detector bbox confidence for candidate filtering'
     )
 
     args = parser.parse_args()
@@ -580,6 +725,9 @@ def main():
     print(f'Baseball videos directory: {baseball_vids_dir}')
     print(f'CLIP model: {args.clip_model}')
     print(f'CLIP device: {args.clip_device}')
+    print(f'Crop padding: {args.crop_padding}')
+    print(f'Min hand points: {args.min_hand_points}')
+    print(f'Min bbox score: {args.min_bbox_score}')
     print(f'Force reprocessing: {args.force}\n')
 
     print('Loading CLIP model...')
@@ -597,7 +745,9 @@ def main():
         min_keypoint_conf=args.min_keypoint_confidence,
         min_upper_body_points=args.min_upper_body_points,
         min_pitcher_score=args.min_pitcher_score,
-        min_score_gap=args.min_score_gap,
+        min_hand_points=args.min_hand_points,
+        crop_padding=args.crop_padding,
+        min_bbox_score=args.min_bbox_score,
         force=args.force
     )
 
