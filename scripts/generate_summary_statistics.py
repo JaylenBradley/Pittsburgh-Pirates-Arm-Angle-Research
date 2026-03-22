@@ -57,7 +57,7 @@ except ImportError:
     warnings.warn("Matplotlib not available. Plotting will be disabled.")
 
 # Import our utilities
-import pose_utils
+from scripts.utils import pose_utils
 
 
 def load_results_csv(csv_path):

@@ -11,14 +11,13 @@ Usage:
 """
 
 import sys
-import os
 from pathlib import Path
 import subprocess
 from argparse import ArgumentParser
 
 # Import utilities
 sys.path.insert(0, str(Path(__file__).parent))
-import pose_utils
+from scripts.utils import pose_utils
 
 
 def is_icloud_placeholder(file_path):

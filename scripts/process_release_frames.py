@@ -36,7 +36,7 @@ from mmpose.apis import inference_top_down_pose_model, vis_pose_result, process_
 from mmdet.apis import inference_detector
 
 # Import our utilities
-import pose_utils
+from scripts.utils import pose_utils
 
 
 def process_frame(frame_path, video_dir, det_model, pose_model, dataset, dataset_info,

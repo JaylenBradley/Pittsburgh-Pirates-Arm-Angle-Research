@@ -42,7 +42,7 @@ from pathlib import Path
 from argparse import ArgumentParser
 
 # Import our utilities
-import pose_utils
+from scripts.utils import pose_utils
 
 
 def run_command(cmd, description):

@@ -31,7 +31,7 @@ from pathlib import Path
 from argparse import ArgumentParser
 
 # Import our utilities
-import pose_utils
+from scripts.utils import pose_utils
 
 
 def collect_frame_data(baseball_vids_dir):
