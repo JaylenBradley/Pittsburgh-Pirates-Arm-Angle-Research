@@ -1,28 +1,26 @@
 """
 Label Pitchers Script for Baseball Pitcher Pose Analysis
 
-This script provides an interactive tool to select the pitcher from detected persons.
-For each frame in poses/, it:
-1. Loads all detected persons from the poses data
-2. Creates cropped images of each person's bounding box region
-3. Displays all crops in a tiled window
+Interactive tool to manually select the pitcher from detected persons.
+For each frame in release_frames/, it:
+1. Loads detected persons from poses/
+2. Filters out detections without body and hand keypoints
+3. Displays filtered candidates as cropped tiles
 4. Allows user to select the pitcher by clicking or pressing number key
-5. Saves pitcher-specific data to pitcher_labels/FRAME_NAME/
+5. Saves pitcher-specific data to pitcher_labels/
 
 Usage:
-    From Pirates_Arm_Angle directory:
     python scripts/label_pitchers.py [--videos-dir PATH] [--force]
 
 Arguments:
-    --videos-dir: Optional path to baseball_vids directory (default: ~/Desktop/baseball_vids)
+    --videos-dir: Path to baseball_vids directory (default: ~/Desktop/baseball_vids)
     --force: Force reprocessing of already-labeled frames
 
 Controls:
-    - Click on a person's crop to select them as the pitcher
-    - Or press the number key (1-9) corresponding to the person
-    - Press 'n' to mark frame as "no pitcher detected"
-    - Press 's' to skip current frame
-    - Press 'q' to quit
+    Click on a crop or press number (1-9) to select pitcher
+    'n' = no pitcher detected
+    's' = skip frame
+    'q' = quit
 
 Example:
     python scripts/label_pitchers.py
@@ -35,219 +33,114 @@ from argparse import ArgumentParser
 import cv2
 import numpy as np
 
-from utils import pose_utils
+from utils import pose_utils, crop_utils
 
 
-class PitcherLabeler:
-    """Interactive pitcher labeling tool."""
-
-    def __init__(self, tile_size=300, padding=10):
-        """
-        Initialize the labeler.
-
-        Args:
-            tile_size: Size of each person crop tile (pixels)
-            padding: Padding between tiles (pixels)
-        """
-        self.tile_size = tile_size
-        self.padding = padding
-        self.selected_person = None
-        self.window_name = "Select Pitcher - Click or Press Number (n=No Pitcher, s=Skip, q=Quit)"
-
-    def create_person_crop(self, image, bbox, person_id):
-        """
-        Create a crop of a person from the image.
-
-        Args:
-            image: Full image array
-            bbox: Bounding box dictionary with x1, y1, x2, y2
-            person_id: ID of the person
-
-        Returns:
-            Cropped and resized image with person ID label
-        """
-        x1 = int(bbox['x1'])
-        y1 = int(bbox['y1'])
-        x2 = int(bbox['x2'])
-        y2 = int(bbox['y2'])
-
-        # Add some padding to bounding box
-        pad = 20
-        x1 = max(0, x1 - pad)
-        y1 = max(0, y1 - pad)
-        x2 = min(image.shape[1], x2 + pad)
-        y2 = min(image.shape[0], y2 + pad)
-
-        # Crop
-        crop = image[y1:y2, x1:x2].copy()
-
-        # Resize to tile size (maintain aspect ratio)
-        h, w = crop.shape[:2]
-        if h > w:
-            new_h = self.tile_size
-            new_w = int(w * (self.tile_size / h))
-        else:
-            new_w = self.tile_size
-            new_h = int(h * (self.tile_size / w))
-
-        crop_resized = cv2.resize(crop, (new_w, new_h))
-
-        # Create square tile with padding
-        tile = np.ones((self.tile_size, self.tile_size, 3), dtype=np.uint8) * 50
-
-        # Center the crop in the tile
-        y_offset = (self.tile_size - new_h) // 2
-        x_offset = (self.tile_size - new_w) // 2
-        tile[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = crop_resized
-
-        # Add person ID label
-        label = f"Person {person_id + 1}"
-        cv2.putText(tile, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                    1.0, (255, 255, 255), 2)
-
-        return tile
-
-    def create_tiled_display(self, image, persons_data):
-        """
-        Create a tiled display of all detected persons.
-
-        Args:
-            image: Full image array
-            persons_data: List of person data dictionaries
-
-        Returns:
-            Tiled display image
-        """
-        num_persons = len(persons_data)
-
-        # Calculate grid dimensions
-        cols = min(3, num_persons)  # Max 3 columns
-        rows = (num_persons + cols - 1) // cols
-
-        # Create tiles for each person
-        tiles = []
-        for person_data in persons_data:
-            tile = self.create_person_crop(image, person_data['bbox'], person_data['person_id'])
-            tiles.append(tile)
-
-        # Pad with empty tiles if needed
-        while len(tiles) < rows * cols:
-            empty_tile = np.ones((self.tile_size, self.tile_size, 3), dtype=np.uint8) * 50
-            tiles.append(empty_tile)
-
-        # Create tiled display
-        tile_rows = []
-        for r in range(rows):
-            row_tiles = tiles[r * cols:(r + 1) * cols]
-            # Add padding between tiles
-            row_with_padding = [row_tiles[0]]
-            for tile in row_tiles[1:]:
-                padding = np.ones((self.tile_size, self.padding, 3), dtype=np.uint8) * 100
-                row_with_padding.append(padding)
-                row_with_padding.append(tile)
-            row = np.hstack(row_with_padding)
-            tile_rows.append(row)
-
-        # Stack rows vertically with padding
-        display_rows = [tile_rows[0]]
-        for row in tile_rows[1:]:
-            padding = np.ones((self.padding, row.shape[1], 3), dtype=np.uint8) * 100
-            display_rows.append(padding)
-            display_rows.append(row)
-
-        display = np.vstack(display_rows)
-
-        return display, cols
-
-    def mouse_callback(self, event, x, y, flags, param):
-        """Handle mouse click events."""
+def select_pitcher_interactive(image, filtered_persons):
+    """
+    Display interactive UI to select pitcher from filtered candidates.
+    
+    Args:
+        image: Full frame image (clean from release_frames)
+        filtered_persons: List of person dicts with 'original_index' field
+    
+    Returns:
+        Original index of selected person, -1 for no pitcher, -2 for skip, None for quit
+    """
+    if len(filtered_persons) == 0:
+        return -1
+    
+    if len(filtered_persons) == 1:
+        print(f"    Only 1 candidate detected - auto-selecting")
+        return filtered_persons[0].get('original_index', 0)
+    
+    # Build candidate list for display
+    candidates = []
+    for post_filter_idx, person_data in enumerate(filtered_persons):
+        original_idx = person_data.get('original_index', post_filter_idx)
+        crop = crop_utils.extract_person_crop(
+            image,
+            person_data,
+            padding_percent=10,
+            draw_overlay=True  # Show red overlay for manual inspection
+        )
+        candidates.append({
+            'post_filter_idx': post_filter_idx,
+            'original_idx': original_idx,
+            'crop': crop
+        })
+    
+    # Create tiled display
+    display, cols = crop_utils.create_tiled_display_from_crops(candidates)
+    
+    if display is None:
+        return -1
+    
+    # Setup window and interaction
+    window_name = "Select Pitcher - Click or Press Number (n=No Pitcher, s=Skip, q=Quit)"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    
+    selected_idx = None
+    
+    def mouse_callback(event, x, y, flags, param):
+        nonlocal selected_idx
         if event == cv2.EVENT_LBUTTONDOWN:
-            cols, num_persons = param
-
-            # Calculate which tile was clicked
-            tile_with_padding = self.tile_size + self.padding
+            tile_size = 300
+            padding = 10
+            tile_with_padding = tile_size + padding
             col = x // tile_with_padding
-            row = y // (self.tile_size + self.padding)
-
-            person_idx = row * cols + col
-
-            if person_idx < num_persons:
-                self.selected_person = person_idx
-                cv2.destroyAllWindows()
-
-    def select_pitcher(self, image, persons_data):
-        """
-        Display interactive UI to select pitcher.
-
-        Args:
-            image: Full frame image
-            persons_data: List of person data dictionaries
-
-        Returns:
-            Selected person ID (int), or -1 for no pitcher, or None for skip
-        """
-        if len(persons_data) == 0:
-            print("    No persons detected in frame")
-            return -1
-
-        if len(persons_data) == 1:
-            print(f"    Only 1 person detected - auto-selecting")
-            return 0
-
-        # Create tiled display
-        display, cols = self.create_tiled_display(image, persons_data)
-
-        # Setup window
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(self.window_name, self.mouse_callback,
-                             param=(cols, len(persons_data)))
-
-        self.selected_person = None
-
-        while True:
-            cv2.imshow(self.window_name, display)
-            key = cv2.waitKey(1) & 0xFF
-
-            # Number key pressed (1-9)
-            if ord('1') <= key <= ord('9'):
-                person_idx = key - ord('1')
-                if person_idx < len(persons_data):
-                    self.selected_person = person_idx
-                    break
-
-            # 'n' pressed - no pitcher
-            elif key == ord('n'):
-                self.selected_person = -1
+            row = y // tile_with_padding
+            idx = row * cols + col
+            if idx < len(candidates):
+                selected_idx = candidates[idx]['original_idx']
+    
+    cv2.setMouseCallback(window_name, mouse_callback)
+    
+    while True:
+        cv2.imshow(window_name, display)
+        key = cv2.waitKey(1) & 0xFF
+        
+        # Number key (1-9)
+        if ord('1') <= key <= ord('9'):
+            idx = key - ord('1')
+            if idx < len(candidates):
+                selected_idx = candidates[idx]['original_idx']
                 break
+        
+        # 'n' = no pitcher
+        elif key == ord('n'):
+            selected_idx = -1
+            break
+        
+        # 's' = skip
+        elif key == ord('s'):
+            selected_idx = -2
+            break
+        
+        # 'q' = quit
+        elif key == ord('q'):
+            cv2.destroyAllWindows()
+            return None
+        
+        # Mouse click
+        if selected_idx is not None:
+            break
+    
+    cv2.destroyAllWindows()
+    return selected_idx
 
-            # 's' pressed - skip
-            elif key == ord('s'):
-                self.selected_person = -2
-                break
 
-            # 'q' pressed - quit
-            elif key == ord('q'):
-                cv2.destroyAllWindows()
-                return None
-
-            # Mouse click processed
-            if self.selected_person is not None:
-                break
-
-        cv2.destroyAllWindows()
-        return self.selected_person
-
-
-def process_frame(frame_path, video_dir, video_id, ground_truth_data, labeler, force=False):
+def process_frame(frame_path, video_dir, video_id, ground_truth_data, force=False):
     """
     Process a single frame to label the pitcher.
-
+    
     Args:
-        frame_path: Path to the frame image
-        video_dir: Path to the video directory
-        labeler: PitcherLabeler instance
-        force: Force reprocessing
-
+        frame_path: Path to release frame image
+        video_dir: Path to video directory
+        video_id: Video ID (for ground truth lookup)
+        ground_truth_data: Dict of ground truth pitcher hands
+        force: Force reprocessing if already labeled
+    
     Returns:
         Tuple of (success, message, should_quit)
     """
@@ -270,35 +163,40 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, labeler, f
     poses_data = pose_utils.load_json(poses_json)
     persons_data = poses_data.get('persons', [])
 
-    # Load the visualization image from poses directory (has keypoints already drawn)
-    poses_vis_img = poses_dir / f"{poses_frame_name}.jpg"
-    if poses_vis_img.exists():
-        image = cv2.imread(str(poses_vis_img))
+    # Filter persons (body + hand keypoints required)
+    filtered_persons, _ = crop_utils.filter_persons_by_keypoints(
+        persons_data,
+        confidence_threshold=0.2
+    )
+
+    # Load clean image from release_frames
+    release_frame_path = video_dir / 'release_frames' / frame_path.name
+    if release_frame_path.exists():
+        image = cv2.imread(str(release_frame_path))
     else:
-        # Fallback to original image
-        image = cv2.imread(str(frame_path))
+        # Fallback
+        poses_vis_img = poses_dir / f"{poses_frame_name}.jpg"
+        image = cv2.imread(str(poses_vis_img)) if poses_vis_img.exists() else None
 
     if image is None:
         return False, "Failed to load image", False
 
     # Select pitcher
-    print(f"    Select pitcher ({len(persons_data)} person(s) detected)...")
-    selected_person_idx = labeler.select_pitcher(image, persons_data)
+    print(f"    Select pitcher ({len(filtered_persons)} candidate(s))...")
+    selected_original_idx = select_pitcher_interactive(image, filtered_persons)
 
-    # Check for quit (q key pressed)
-    if selected_person_idx is None:
+    # Check responses
+    if selected_original_idx is None:
         return False, "Quit by user", True
-
-    # Check for skip current frame (s key pressed)
-    if selected_person_idx == -2:
+    if selected_original_idx == -2:
         return "skip", "Skipped current frame", False
 
     # Create output directory
     output_dir = video_dir / 'pitcher_labels' / pitcher_frame_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Handle no pitcher case
-    if selected_person_idx == -1:
+    # Handle no pitcher
+    if selected_original_idx == -1:
         output_data = {
             'frame': frame_path.name,
             'pitcher_detected': False,
@@ -308,18 +206,16 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, labeler, f
         return "skip", "No pitcher detected", False
 
     # Get pitcher data
-    pitcher_data = persons_data[selected_person_idx]
+    pitcher_data = persons_data[selected_original_idx]
 
-    # Get ground truth data to determine arm side
+    # Determine arm side from ground truth
     arm_side = 'right'  # default
     if video_id in ground_truth_data:
         pitcher_hand = ground_truth_data[video_id]['PitcherHand']
         arm_side = 'right' if pitcher_hand.upper() == 'R' else 'left'
 
-    # Extract keypoints for the specific arm
+    # Extract keypoints for arm
     keypoints_array = np.array(pitcher_data['keypoints'])
-
-    # Get keypoint indices
     if arm_side == 'right':
         shoulder_idx = pose_utils.KEYPOINT_NAMES['right_shoulder']
         elbow_idx = pose_utils.KEYPOINT_NAMES['right_elbow']
@@ -329,23 +225,21 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, labeler, f
         elbow_idx = pose_utils.KEYPOINT_NAMES['left_elbow']
         wrist_idx = pose_utils.KEYPOINT_NAMES['left_wrist']
 
-    # Extract specific keypoints
     shoulder = keypoints_array[shoulder_idx]
     elbow = keypoints_array[elbow_idx]
     wrist = keypoints_array[wrist_idx]
 
-    # Create keypoint dictionaries
+    # Create output data
     shoulder_key = f'{arm_side}_shoulder'
     elbow_key = f'{arm_side}_elbow'
     wrist_key = f'{arm_side}_wrist'
 
-    # Create output data with extracted keypoints
     output_data = {
         'frame': frame_path.name,
         'pitcher_detected': True,
         'pitcher_person_id': pitcher_data['person_id'],
         'bbox': pitcher_data['bbox'],
-        'keypoints': pitcher_data['keypoints'],  # Store all 133 keypoints for flexibility
+        'keypoints': pitcher_data['keypoints'],
         'arm_side': arm_side,
         shoulder_key: {
             'x': float(shoulder[0]),
@@ -367,46 +261,23 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, labeler, f
     # Save JSON
     pose_utils.save_json(output_data, output_dir / 'data.json')
 
-    # Load the visualization image that already has pose keypoints drawn
-    poses_vis_img = poses_dir / f"{poses_frame_name}.jpg"
-    if poses_vis_img.exists():
-        vis_image = cv2.imread(str(poses_vis_img))
-    else:
-        # Fallback - use the image we already loaded
-        vis_image = image.copy()
+    # Create and save cropped pitcher image WITH red overlay and keypoints (as shown during labeling)
+    cropped_pitcher_with_overlay = crop_utils.extract_person_crop(
+        image,
+        pitcher_data,
+        padding_percent=10,
+        draw_overlay=True  # Red box outline + keypoint markers
+    )
 
-    # Create and save cropped pitcher image with keypoints
-    bbox = pitcher_data['bbox']
-    x1, y1 = int(bbox['x1']), int(bbox['y1'])
-    x2, y2 = int(bbox['x2']), int(bbox['y2'])
-
-    # Add padding
-    pad = 50
-    x1 = max(0, x1 - pad)
-    y1 = max(0, y1 - pad)
-    x2 = min(vis_image.shape[1], x2 + pad)
-    y2 = min(vis_image.shape[0], y2 + pad)
-
-    # Crop the visualization image (which already has keypoints drawn)
-    crop = vis_image[y1:y2, x1:x2].copy()
-
-    # Draw bounding box around the pitcher
-    cv2.rectangle(crop, (5, 5), (crop.shape[1] - 5, crop.shape[0] - 5), (0, 255, 0), 2)
-
-    # Save image
     output_img = output_dir / f"{pitcher_frame_name}.jpg"
-    cv2.imwrite(str(output_img), crop)
+    cv2.imwrite(str(output_img), cropped_pitcher_with_overlay)
 
-    return True, f"Labeled pitcher (person {selected_person_idx + 1}, {arm_side} arm)", False
+    return True, f"Labeled pitcher (person {selected_original_idx + 1}, {arm_side} arm)", False
 
 
 def process_all_videos(baseball_vids_dir, ground_truth_data, force=False):
     """
-    Process all videos in the baseball_vids directory.
-
-    Args:
-        baseball_vids_dir: Path to baseball_vids directory
-        force: Force reprocessing
+    Process all videos in baseball_vids directory.
     """
     video_dirs = pose_utils.get_video_dirs(baseball_vids_dir)
 
@@ -418,8 +289,6 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, force=False):
     print(f"Found {len(video_dirs)} video(s) to process")
     print(f"{'=' * 50}\n")
 
-    labeler = PitcherLabeler()
-
     total_processed = 0
     total_skipped = 0
     total_failed = 0
@@ -428,16 +297,14 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, force=False):
     for video_idx, (video_id, video_dir) in enumerate(video_dirs, 1):
         print(f"[{video_idx}/{len(video_dirs)}] Processing video: {video_id}")
 
-        # Get all release frames
         release_frames = pose_utils.get_release_frames(video_dir)
 
         if not release_frames:
-            print(f"  No frames in release_frames/")
-            print()
+            print(f"  No frames in release_frames/\n")
             continue
 
         total_frames += len(release_frames)
-        print(f"  Found {len(release_frames)} frame(s) in release_frames/")
+        print(f"  Found {len(release_frames)} frame(s)\n")
 
         video_processed = 0
         video_skipped = 0
@@ -445,43 +312,41 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, force=False):
         should_quit = False
 
         for frame_idx, frame_path in enumerate(release_frames, 1):
-            frame_name = frame_path.name
-            print(f"  [{frame_idx}/{len(release_frames)}] {frame_name}")
+            print(f"  [{frame_idx}/{len(release_frames)}] {frame_path.name}", end=" ... ")
 
             try:
                 success, message, quit_flag = process_frame(
-                    frame_path, video_dir, video_id, ground_truth_data, labeler, force=force
+                    frame_path, video_dir, video_id, ground_truth_data, force=force
                 )
 
                 if quit_flag:
-                    print(f"Quitting...")
+                    print(f"\nQuitting...")
                     should_quit = True
                     break
 
                 if success == "skip" or (success and message == "Already labeled"):
                     video_skipped += 1
                     total_skipped += 1
-                    print(f"SKIPPED: {message}")
+                    print(f"SKIPPED")
                 elif success:
                     video_processed += 1
                     total_processed += 1
-                    print(f"{message}")
+                    print(f"OK")
                 else:
                     video_failed += 1
                     total_failed += 1
-                    print(f"{message}")
+                    print(f"FAILED")
             except Exception as e:
                 video_failed += 1
                 total_failed += 1
-                print(f"Error: {str(e)}")
+                print(f"ERROR: {str(e)}")
 
-        print(f"Video summary: {video_processed} processed, {video_skipped} skipped, {video_failed} failed")
-        print()
+        print(f"Video summary: {video_processed} labeled, {video_skipped} skipped, {video_failed} failed\n")
 
         if should_quit:
             break
 
-    # Print overall summary
+    # Print summary
     print(f"{'=' * 50}")
     print(f"OVERALL SUMMARY")
     print(f"{'=' * 50}")
@@ -494,30 +359,16 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, force=False):
 
 
 def main():
-    parser = ArgumentParser(
-        description="Interactive tool to label pitchers in frames"
-    )
-    parser.add_argument(
-        "--videos-dir",
-        type=str,
-        default=None,
-        help="Path to baseball_vids directory (default: ~/Desktop/baseball_vids)"
-    )
-    parser.add_argument(
-        "--csv",
-        type=str,
-        default=None,
-        help="Path to ground truth CSV file (default: baseball_vids/arm_angles_high_speed.csv)"
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Force reprocessing of already-labeled frames"
-    )
+    parser = ArgumentParser(description="Label pitchers in frames")
+    parser.add_argument("--videos-dir", type=str, default=None,
+                        help="Path to baseball_vids directory")
+    parser.add_argument("--csv", type=str, default=None,
+                        help="Path to ground truth CSV file")
+    parser.add_argument("--force", action="store_true",
+                        help="Force reprocessing of already-labeled frames")
 
     args = parser.parse_args()
 
-    # Get baseball_vids directory
     try:
         baseball_vids_dir = pose_utils.get_baseball_vids_dir(args.videos_dir)
     except FileNotFoundError as e:
@@ -528,7 +379,7 @@ def main():
         print(f"Error: Directory not found: {baseball_vids_dir}")
         sys.exit(1)
 
-    # Get CSV path
+    # Load ground truth
     if args.csv:
         csv_path = Path(args.csv)
     else:
@@ -536,24 +387,21 @@ def main():
 
     if not csv_path.exists():
         print(f"Warning: Ground truth CSV not found: {csv_path}")
-        print("Will use default 'right' arm side for all pitchers\n")
         ground_truth_data = {}
     else:
-        # Load ground truth data
         print("Loading ground truth data...")
         try:
             ground_truth_data = pose_utils.load_ground_truth_csv(csv_path)
             print(f"✓ Loaded ground truth for {len(ground_truth_data)} videos\n")
         except Exception as e:
-            print(f"Warning: Failed to load ground truth CSV: {e}")
-            print("Will use default 'right' arm side for all pitchers\n")
+            print(f"Warning: Failed to load ground truth: {e}\n")
             ground_truth_data = {}
 
-    print(f"\nBaseball videos directory: {baseball_vids_dir}")
+    print(f"Baseball videos directory: {baseball_vids_dir}")
     print(f"Force reprocessing: {args.force}\n")
 
-    # Process all videos
     process_all_videos(baseball_vids_dir, ground_truth_data, force=args.force)
 
 if __name__ == "__main__":
     main()
+

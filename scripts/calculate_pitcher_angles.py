@@ -17,7 +17,7 @@ Usage:
 Arguments:
     --videos-dir PATH: Optional path to baseball_vids directory (default: ~/Desktop/baseball_vids)
     --csv PATH: Path to ground truth CSV file (default: baseball_vids/arm_angles_high_speed.csv)
-    --start-joint shoulder|elbow: Joint to start angle measurement from (default: shoulder)
+    --start-joint shoulder|elbow|both: Joint to start angle measurement from (default: shoulder)
     --force: Force reprocessing of already-calculated frames
 
 Examples:
