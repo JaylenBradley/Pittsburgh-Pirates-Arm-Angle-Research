@@ -30,8 +30,7 @@ import csv
 from pathlib import Path
 from argparse import ArgumentParser
 
-# Import our utilities
-from scripts.utils import pose_utils
+from utils import pose_utils
 
 
 def collect_frame_data(baseball_vids_dir):

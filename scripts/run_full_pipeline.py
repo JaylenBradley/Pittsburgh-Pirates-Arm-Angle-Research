@@ -41,8 +41,7 @@ import subprocess
 from pathlib import Path
 from argparse import ArgumentParser
 
-# Import our utilities
-from scripts.utils import pose_utils
+from utils import pose_utils
 
 
 def run_command(cmd, description):

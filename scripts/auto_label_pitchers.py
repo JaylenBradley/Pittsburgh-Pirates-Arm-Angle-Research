@@ -49,7 +49,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from scripts.utils import pose_utils
+from utils import pose_utils
 
 # Upper-body keypoints used to validate whether a bbox likely contains a person
 # with usable skeleton data.

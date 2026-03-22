@@ -37,7 +37,7 @@ from argparse import ArgumentParser
 import cv2
 import math
 
-from scripts.utils import pose_utils
+from utils import pose_utils
 
 
 def draw_angle_on_image(image, pitcher_data, ground_truth_angle, start_joint='shoulder'):

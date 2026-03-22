@@ -35,8 +35,7 @@ sys.path.insert(0, str(vitpose_path))
 from mmpose.apis import inference_top_down_pose_model, vis_pose_result, process_mmdet_results
 from mmdet.apis import inference_detector
 
-# Import our utilities
-from scripts.utils import pose_utils
+from utils import pose_utils
 
 
 def process_frame(frame_path, video_dir, det_model, pose_model, dataset, dataset_info,

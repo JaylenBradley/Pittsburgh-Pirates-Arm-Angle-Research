@@ -35,7 +35,7 @@ from argparse import ArgumentParser
 import cv2
 import numpy as np
 
-from scripts.utils import pose_utils
+from utils import pose_utils
 
 
 class PitcherLabeler:
