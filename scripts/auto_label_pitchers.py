@@ -131,7 +131,7 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, selector,
         save_no_pitcher_label(output_dir, frame_path.name, 'No persons detected in pose output')
         return 'skip', 'No persons detected'
 
-    arm_side = 'right'
+    arm_side = ''
     if video_id in ground_truth_data:
         pitcher_hand = ground_truth_data[video_id].get('PitcherHand', 'R')
         arm_side = 'right' if str(pitcher_hand).upper() == 'R' else 'left'
@@ -152,7 +152,7 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, selector,
                               'No valid detections with required arm/hand keypoints')
         return 'skip', 'No valid candidates after skeleton filtering'
 
-    # Advisor-requested first pass: score each crop by pitcherness and pick max.
+    # Score each crop by pitcherness and pick max.
     for candidate in candidates:
         candidate['pitcher_score'] = selector.score_pitcherness(candidate['crop'])
 

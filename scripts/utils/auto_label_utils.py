@@ -41,7 +41,6 @@ RIGHT_HAND_RANGE = range(112, 133)
 class CLIPPitcherSelector:
     """Scores crops by CLIP image-text inner product for pitcher prompts."""
 
-    # Hardcoded multiple pitcher prompts to improve detection accuracy.
     DEFAULT_PITCHER_PROMPTS = [
         "baseball pitcher's baseball glove",
         "a baseball pitcher throwing a baseball",
@@ -355,4 +354,3 @@ def build_candidates(persons_data, score_image, arm_side,
         })
 
     return candidates
-
