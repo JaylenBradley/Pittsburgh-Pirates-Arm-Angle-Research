@@ -50,10 +50,6 @@ def select_pitcher_interactive(image, filtered_persons):
     if len(filtered_persons) == 0:
         return -1
     
-    if len(filtered_persons) == 1:
-        print(f"    Only 1 candidate detected - auto-selecting")
-        return filtered_persons[0].get('original_index', 0)
-    
     # Build candidate list for display
     candidates = []
     for post_filter_idx, person_data in enumerate(filtered_persons):
@@ -61,7 +57,7 @@ def select_pitcher_interactive(image, filtered_persons):
         crop = crop_utils.extract_person_crop(
             image,
             person_data,
-            padding_percent=10,
+            padding_percent=20,
             draw_overlay=True  # Show red overlay for manual inspection
         )
         candidates.append({
@@ -77,7 +73,7 @@ def select_pitcher_interactive(image, filtered_persons):
         return -1
     
     # Setup window and interaction
-    window_name = "Select Pitcher - Click or Press Number (n=No Pitcher, s=Skip, q=Quit)"
+    window_name = "Select Pitcher - Click or Press Number (n = No Pitcher, s = Skip, q = Quit)"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     
     selected_idx = None
@@ -209,7 +205,7 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, force=Fals
     pitcher_data = persons_data[selected_original_idx]
 
     # Determine arm side from ground truth
-    arm_side = 'right'  # default
+    arm_side = ''
     if video_id in ground_truth_data:
         pitcher_hand = ground_truth_data[video_id]['PitcherHand']
         arm_side = 'right' if pitcher_hand.upper() == 'R' else 'left'
@@ -258,7 +254,6 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, force=Fals
         }
     }
 
-    # Save JSON
     pose_utils.save_json(output_data, output_dir / 'data.json')
 
     # Create and save cropped pitcher image WITH red overlay and keypoints (as shown during labeling)
@@ -266,7 +261,7 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, force=Fals
         image,
         pitcher_data,
         padding_percent=10,
-        draw_overlay=True  # Red box outline + keypoint markers
+        draw_overlay=True  # Red box outline & keypoint markers
     )
 
     output_img = output_dir / f"{pitcher_frame_name}.jpg"

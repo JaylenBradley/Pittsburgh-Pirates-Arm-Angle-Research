@@ -57,7 +57,7 @@ def process_frame(frame_path, video_dir, det_model, pose_model, dataset, dataset
         Tuple of (success, message)
     """
     frame_name = frame_path.stem  # e.g., 'frame_0001'
-    output_frame_name = pose_utils.format_frame_name(frame_path.name, 'poses')
+    output_frame_name = pose_utils.format_frame_name(frame_name, 'poses')
 
     # Check if already processed
     if not force and pose_utils.check_output_exists(video_dir, output_frame_name, 'poses'):
@@ -69,7 +69,7 @@ def process_frame(frame_path, video_dir, det_model, pose_model, dataset, dataset
 
     file_size = frame_path.stat().st_size
     if file_size == 0:
-        return False, "Image file is empty (0 bytes) - likely iCloud placeholder or corrupted. Run: python scripts/check_icloud_files.py --download"
+        return False, "Image file is empty (0 bytes) - likely iCloud placeholder or corrupted"
 
     if file_size < 100:
         return False, f"Image file is too small ({file_size} bytes) - likely iCloud placeholder or corrupted"
@@ -78,7 +78,7 @@ def process_frame(frame_path, video_dir, det_model, pose_model, dataset, dataset
     try:
         test_image = cv2.imread(str(frame_path))
         if test_image is None:
-            return False, "Image file is corrupted or iCloud placeholder (OpenCV cannot read it). Run: python scripts/check_icloud_files.py --download"
+            return False, "Image file is corrupted or iCloud placeholder (OpenCV cannot read it)"
     except Exception as e:
         return False, f"Failed to read image: {str(e)}"
 
@@ -290,7 +290,7 @@ def main():
     print(f"Device: {args.device}")
     print(f"Force reprocessing: {args.force}\n")
 
-    # Model paths (from your existing setup)
+    # Model paths (from existing setup)
     det_config = vitpose_path / "demo/mmdetection_cfg/faster_rcnn_r50_fpn_coco.py"
     det_checkpoint = "https://download.openmmlab.com/mmdetection/v2.0/faster_rcnn/faster_rcnn_r50_fpn_1x_coco/faster_rcnn_r50_fpn_1x_coco_20200130-047c8118.pth"
     pose_config = vitpose_path / "configs/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/hrnet_w48_coco_wholebody_384x288_dark_plus.py"

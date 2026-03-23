@@ -31,7 +31,6 @@ from argparse import ArgumentParser
 
 
 def check_ffmpeg_installed():
-    """Check if ffmpeg is installed and accessible."""
     try:
         result = subprocess.run(
             ["ffmpeg", "-version"],
@@ -60,10 +59,9 @@ def get_desktop_path():
 def get_video_files(videos_dir):
     """Get all MP4 files in the videos directory."""
     video_files = list(Path(videos_dir).glob("*.mp4"))
-    video_files.extend(list(Path(videos_dir).glob("*.MP4")))  # Handle uppercase
+    video_files.extend(list(Path(videos_dir).glob("*.MP4")))
 
     return sorted(video_files)
-
 
 
 def is_already_processed(video_path, videos_dir):
@@ -71,7 +69,6 @@ def is_already_processed(video_path, videos_dir):
     video_name = video_path.stem
     all_frames_dir = Path(videos_dir) / video_name / "all_frames"
 
-    # Check if all_frames directory exists and has files
     if all_frames_dir.exists():
         frame_files = list(all_frames_dir.glob("frame_*.jpg"))
         if frame_files:
@@ -96,7 +93,6 @@ def extract_frames(video_path, output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # FFmpeg command to extract frames
-    # Using the same format as in notes.txt: frame_%04d.jpg
     output_pattern = str(output_dir / "frame_%04d.jpg")
 
     cmd = [
@@ -131,13 +127,8 @@ def extract_frames(video_path, output_dir):
 def delete_video(video_path):
     """
     Delete a video file after successful frame extraction.
-
-    Args:
-        video_path: Path to the video file to delete
-
-    Returns:
-        tuple: (success: bool, error_message: str or None)
     """
+
     try:
         os.remove(video_path)
         return True, None
@@ -276,7 +267,6 @@ def main():
 
     print(f"\nVideos directory: {videos_dir}\n")
 
-    # Check ffmpeg installation
     if not check_ffmpeg_installed():
         sys.exit(1)
 
