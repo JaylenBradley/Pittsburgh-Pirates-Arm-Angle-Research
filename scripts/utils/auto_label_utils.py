@@ -42,9 +42,14 @@ class CLIPPitcherSelector:
     """Scores crops by CLIP image-text inner product for pitcher prompts."""
 
     DEFAULT_PITCHER_PROMPTS = [
-        "baseball pitcher's baseball glove",
-        "a baseball pitcher throwing a baseball",
-        "arm extended throwing a baseball"
+        # "baseball pitcher's baseball glove",
+        # "a baseball pitcher throwing a baseball",
+        # "arm extended throwing a baseball"
+        "baseball pitcher on the mound",
+        "baseball pitcher during leg lift",
+        "baseball pitcher beginning delivery",
+        "baseball pitcher after release on the mound",
+        "baseball pitcher in baseball uniform on pitching mound"
     ]
 
     def __init__(self, model_name='openai/clip-vit-base-patch32', device='auto',
