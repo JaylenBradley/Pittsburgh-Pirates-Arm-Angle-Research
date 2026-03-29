@@ -1,6 +1,7 @@
 .idea
 .DS_Store
 notes.txt
+yolov8l-pose.pt
 
 # Python cache files
 __pycache__/

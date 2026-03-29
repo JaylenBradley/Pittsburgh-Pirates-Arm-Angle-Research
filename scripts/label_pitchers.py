@@ -140,9 +140,8 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, force=Fals
     Returns:
         Tuple of (success, message, should_quit)
     """
-    frame_name = frame_path.stem
     # Get the poses frame name
-    poses_frame_name = pose_utils.format_frame_name(frame_path.name, 'poses')
+    poses_frame_name = pose_utils.format_frame_name(frame_path.name, 'yolo_poses')
     pitcher_frame_name = pose_utils.format_frame_name(frame_path.name, 'pitcher')
 
     # Check if already labeled
@@ -150,7 +149,7 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, force=Fals
         return True, "Already labeled", False
 
     # Load poses data
-    poses_dir = video_dir / 'poses' / poses_frame_name
+    poses_dir = video_dir / '_yolo_poses' / poses_frame_name
     poses_json = poses_dir / 'data.json'
 
     if not poses_json.exists():
@@ -162,7 +161,8 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, force=Fals
     # Filter persons (body + hand keypoints required)
     filtered_persons, _ = crop_utils.filter_persons_by_keypoints(
         persons_data,
-        confidence_threshold=0.2
+        confidence_threshold=0.2,
+        require_hands=False  # YOLO only provides 17 body keypoints, no hands
     )
 
     # Load clean image from release_frames

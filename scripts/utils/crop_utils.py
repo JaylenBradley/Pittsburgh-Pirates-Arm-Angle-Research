@@ -108,17 +108,19 @@ def has_valid_hand_keypoints(keypoints, confidence_threshold=0.2):
     return False
 
 
-def filter_persons_by_keypoints(persons_data, confidence_threshold=0.2):
+def filter_persons_by_keypoints(persons_data, confidence_threshold=0.2, require_hands=True):
     """
     Filter persons list to keep only those with:
     - At least one valid body keypoint (0-16)
-    - At least one valid hand keypoint (91-132)
+    - At least one valid hand keypoint (91-132) if require_hands=True
     
     Preserves original person_id and array position for index mapping.
     
     Args:
         persons_data: List of person dictionaries from poses/data.json
         confidence_threshold: Minimum keypoint confidence (default: 0.2)
+        require_hands: Whether to require hand keypoints (default: True for VitPose, 
+                      set to False for YOLO which only has 17 body keypoints)
     
     Returns:
         Tuple of:
@@ -131,14 +133,22 @@ def filter_persons_by_keypoints(persons_data, confidence_threshold=0.2):
     for original_idx, person in enumerate(persons_data):
         keypoints = person.get('keypoints', [])
         
-        # Must have both body AND hand keypoints
-        if has_valid_body_keypoints(keypoints, confidence_threshold) and \
-           has_valid_hand_keypoints(keypoints, confidence_threshold):
-            # Add original index for tracking
-            person_copy = person.copy()
-            person_copy['original_index'] = original_idx
-            filtered_persons.append(person_copy)
-            original_to_filtered_map[original_idx] = len(filtered_persons) - 1
+        # Check if we have body keypoints
+        has_body = has_valid_body_keypoints(keypoints, confidence_threshold)
+        if not has_body:
+            continue
+        
+        # If require_hands=True, also check for hand keypoints
+        if require_hands:
+            has_hands = has_valid_hand_keypoints(keypoints, confidence_threshold)
+            if not has_hands:
+                continue
+        
+        # This person passed all checks
+        person_copy = person.copy()
+        person_copy['original_index'] = original_idx
+        filtered_persons.append(person_copy)
+        original_to_filtered_map[original_idx] = len(filtered_persons) - 1
     
     return filtered_persons, original_to_filtered_map
 
