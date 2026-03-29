@@ -20,7 +20,7 @@ Usage:
     crop_img = crop_utils.extract_person_crop(
         image, 
         person_data, 
-        padding_percent=10,
+        padding_percent=15,
         draw_overlay=False
     )
     
@@ -32,6 +32,7 @@ Usage:
 """
 
 import cv2
+import numpy as np
 
 # Body keypoint indices (COCO-WholeBody format, indices 0-16)
 BODY_KEYPOINTS = {
@@ -153,14 +154,14 @@ def filter_persons_by_keypoints(persons_data, confidence_threshold=0.2, require_
     return filtered_persons, original_to_filtered_map
 
 
-def extract_person_crop(image, person_data, padding_percent=25, draw_overlay=False):
+def extract_person_crop(image, person_data, padding_percent=15, draw_overlay=False):
     """
     Extract a cropped region around a detected person.
     
     Args:
         image: Full frame image (BGR numpy array)
         person_data: Person dict with bbox and keypoints from poses/data.json
-        padding_percent: Padding percentage around bbox (default: 25%)
+        padding_percent: Padding percentage around bbox (default: 15%)
         draw_overlay: If True, draw red bbox outline and keypoint markers (for manual inspection only)
     
     Returns:
@@ -174,7 +175,7 @@ def extract_person_crop(image, person_data, padding_percent=25, draw_overlay=Fal
     
     # Store original bbox for overlay (before padding)
     orig_x1, orig_y1, orig_x2, orig_y2 = x1, y1, x2, y2
-    
+
     # Calculate padding
     width = x2 - x1
     height = y2 - y1
@@ -192,7 +193,7 @@ def extract_person_crop(image, person_data, padding_percent=25, draw_overlay=Fal
     
     # Draw overlay if requested (only for manual inspection)
     if draw_overlay:
-        # Draw red bounding box outline (original bbox before padding)
+        # Draw red bounding box outline (around original bbox before padding)
         # Adjust to crop coordinate space
         bbox_x1 = max(0, orig_x1 - x1)
         bbox_y1 = max(0, orig_y1 - y1)
@@ -200,28 +201,7 @@ def extract_person_crop(image, person_data, padding_percent=25, draw_overlay=Fal
         bbox_y2 = min(crop.shape[0], orig_y2 - y1)
         
         cv2.rectangle(crop, (int(bbox_x1), int(bbox_y1)), (int(bbox_x2), int(bbox_y2)),
-                      (0, 0, 255), 2)  # Red in BGR
-        
-        # Draw keypoint markers for upper body and arms
-        keypoints = person_data.get('keypoints', [])
-        keypoint_radius = 4
-        keypoint_color = (0, 0, 255)  # Red
-        
-        for kpt_name, kpt_idx in VISUALIZATION_KEYPOINTS.items():
-            if kpt_idx < len(keypoints):
-                kpt = keypoints[kpt_idx]
-                x, y, conf = kpt[0], kpt[1], kpt[2]
-                
-                # Only draw if confidence is above threshold
-                if conf > 0.2:
-                    # Adjust to crop coordinate space
-                    crop_x = int(x - x1)
-                    crop_y = int(y - y1)
-                    
-                    # Check if within crop bounds
-                    if 0 <= crop_x < crop.shape[1] and 0 <= crop_y < crop.shape[0]:
-                        cv2.circle(crop, (crop_x, crop_y), keypoint_radius, keypoint_color, -1)
-    
+                      (0, 0, 255), 2)
     return crop
 
 
@@ -260,8 +240,7 @@ def create_tile_with_label(crop, label_pos, label_orig, tile_size=300):
     Returns:
         Square tile image with crop centered and labels added
     """
-    import numpy as np
-    
+
     # Create square tile with background
     tile = np.ones((tile_size, tile_size, 3), dtype=np.uint8) * 50
     
@@ -282,7 +261,7 @@ def create_tile_with_label(crop, label_pos, label_orig, tile_size=300):
     return tile
 
 
-def create_tiled_display_from_crops(candidates, tile_size=300, padding=10):
+def create_tiled_display_from_crops(candidates, tile_size=300, padding=15):
     """
     Create a tiled grid display of candidate crops with labels.
     
@@ -292,7 +271,7 @@ def create_tiled_display_from_crops(candidates, tile_size=300, padding=10):
             - 'original_idx': original detection index
             - 'post_filter_idx': index after filtering
         tile_size: Size of each tile (default: 300)
-        padding: Padding between tiles (default: 10)
+        padding: Padding between tiles (default: 5)
     
     Returns:
         Tuple of (display_image, num_cols)
@@ -353,4 +332,3 @@ def create_tiled_display_from_crops(candidates, tile_size=300, padding=10):
     display = np.vstack(display_rows)
     
     return display, cols
-
