@@ -122,8 +122,8 @@ def evaluate_video(video_id, video_dir, manual_subdir, auto_subdir, iou_thr):
 
         metrics['both_detected'] += 1
 
-        manual_id = manual_json.get('pitcher_person_id')
-        auto_id = auto_json.get('pitcher_person_id')
+        manual_id = manual_json.get('pitcher_track_id')
+        auto_id = auto_json.get('pitcher_track_id')
         if manual_id == auto_id:
             metrics['id_matches'] += 1
 
@@ -261,4 +261,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

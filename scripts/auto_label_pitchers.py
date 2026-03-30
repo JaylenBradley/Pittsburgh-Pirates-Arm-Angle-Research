@@ -24,8 +24,8 @@ from pathlib import Path
 
 import cv2
 
-from utils import pose_utils, crop_utils, label_utils
-from utils.auto_label_utils import CLIPPitcherSelector
+from utils import pose_utils, label_utils
+from utils.auto_label_utils import CLIPPitcherSelector, build_candidates
 
 
 def find_best_frame(video_dir):
@@ -93,33 +93,28 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
     # Get arm side from ground truth
     arm_side = label_utils.get_arm_side(video_id, ground_truth_data)
 
-    # Build candidates from best frame
+    # Build filtered candidates from best frame, sorted by YOLO bbox confidence
     persons_data = best_poses_data.get('persons', [])
-    candidates = []
-
-    for idx, person in enumerate(persons_data):
-        crop = crop_utils.extract_person_crop(
-            score_image,
-            person,
-            padding_percent=15,
-            draw_overlay=False  # No overlay for CLIP scoring
-        )
-        candidates.append({
-            'idx': idx,
-            'person': person,
-            'crop': crop,
-            'track_id': person.get('track_id')
-        })
+    candidates = build_candidates(
+        persons_data,
+        score_image,
+        min_bbox_score=0.6
+    )
 
     if not candidates:
-        return False, "No valid candidates in best frame", 0, 0
+        return False, "No valid pitcher candidates after filtering", 0, 0
 
-    # Score candidates with CLIP
-    for candidate in candidates:
+    # Only show CLIP the top 4 highest-confidence detections
+    top_candidates = candidates[:4]
+    
+    # Score only top candidates with CLIP
+    for candidate in top_candidates:
         candidate['pitcher_score'] = selector.score_pitcherness(candidate['crop'])
+        candidate['track_id'] = candidate['person'].get('track_id')
 
-    candidates.sort(key=lambda c: c['pitcher_score'], reverse=True)
-    best_candidate = candidates[0]
+    # Sort by CLIP score and take the best
+    top_candidates.sort(key=lambda c: c['pitcher_score'], reverse=True)
+    best_candidate = top_candidates[0]
     best_score = best_candidate['pitcher_score']
     pitcher_track_id = best_candidate['track_id']
 
@@ -129,9 +124,9 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
         num_no_pitcher = 0
         for frame_path in release_frames:
             pitcher_frame_name = pose_utils.format_frame_name(frame_path.name, 'pitcher')
-            if not force and pose_utils.check_output_exists(video_dir, pitcher_frame_name, 'pitcher_labels'):
+            if not force and pose_utils.check_output_exists(video_dir, pitcher_frame_name, 'pitcher_labels_auto'):
                 continue
-            label_utils.save_no_pitcher_label(video_dir, frame_path.name)
+            label_utils.save_no_pitcher_label(video_dir, frame_path.name, output_subdir='pitcher_labels_auto')
             num_no_pitcher += 1
 
         return True, f"All frames marked no pitcher (best_score={best_score:.4f} < {min_pitcher_score})", 0, num_no_pitcher
@@ -148,13 +143,13 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
 
             # Find pitcher track_id in this frame
             for person in frame_persons:
-                if person.get('track_id') == pitcher_track_id:
+                if person.get('track_id') == pitcher_track_id and pitcher_track_id is not None:
                     pitcher_data_map[frame_path.name] = person
                     break
 
     # Batch label all frames
     labeled_count, no_pitcher_count = label_utils.batch_label_frames_with_track_id(
-        video_dir, pitcher_track_id, pitcher_data_map, arm_side, force=force
+        video_dir, pitcher_track_id, pitcher_data_map, arm_side, set(), force=force, output_subdir='pitcher_labels_auto'
     )
 
     return True, f"Labeled pitcher (track_id {pitcher_track_id}, score={best_score:.4f}), {labeled_count} frame(s)", labeled_count, no_pitcher_count

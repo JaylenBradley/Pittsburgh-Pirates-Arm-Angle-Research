@@ -26,16 +26,17 @@ import numpy as np
 from . import pose_utils, crop_utils
 
 
-def save_no_pitcher_label(video_dir, frame_name):
+def save_no_pitcher_label(video_dir, frame_name, output_subdir='pitcher_labels'):
     """
     Save 'no pitcher detected' label for a frame.
     
     Args:
         video_dir: Path to video directory
         frame_name: Name of the frame file (e.g., 'frame_0509.jpg')
+        output_subdir: Subdirectory to save to (default: 'pitcher_labels')
     """
     pitcher_frame_name = pose_utils.format_frame_name(frame_name, 'pitcher')
-    output_dir = video_dir / 'pitcher_labels' / pitcher_frame_name
+    output_dir = video_dir / output_subdir / pitcher_frame_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     output_data = {
@@ -105,13 +106,13 @@ def extract_pitcher_output(person_data, frame_name, arm_side, track_id):
     }
 
 
-def save_pitcher_label(video_dir, frame_name, pitcher_data, arm_side, track_id):
+def save_pitcher_label(video_dir, frame_name, pitcher_data, arm_side, track_id, output_subdir='pitcher_labels'):
     """
-    Save pitcher label data to pitcher_labels directory.
+    Save pitcher label data.
     
     Saves both:
     - JSON file with pitcher data and keypoints
-    - Cropped image of the pitcher (no overlay)
+    - Cropped image of the pitcher
     
     Args:
         video_dir: Path to video directory
@@ -119,33 +120,31 @@ def save_pitcher_label(video_dir, frame_name, pitcher_data, arm_side, track_id):
         pitcher_data: Person data dict from poses
         arm_side: 'left' or 'right' (from ground truth)
         track_id: YOLO track ID of the pitcher
+        output_subdir: Subdirectory to save to (default: 'pitcher_labels')
     """
     pitcher_frame_name = pose_utils.format_frame_name(frame_name, 'pitcher')
-    output_dir = video_dir / 'pitcher_labels' / pitcher_frame_name
+    output_dir = video_dir / output_subdir / pitcher_frame_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save JSON data
     output_data = extract_pitcher_output(pitcher_data, frame_name, arm_side, track_id)
     pose_utils.save_json(output_data, output_dir / 'data.json')
 
-    # Save cropped pitcher image (no overlay)
     release_frame_path = video_dir / 'release_frames' / frame_name
     if release_frame_path.exists():
         image = cv2.imread(str(release_frame_path))
-    else:
-        poses_frame_name = pose_utils.format_frame_name(frame_name, 'yolo_poses')
-        poses_vis_img = video_dir / '_yolo_poses' / poses_frame_name / f"{poses_frame_name}.jpg"
-        image = cv2.imread(str(poses_vis_img)) if poses_vis_img.exists() else None
-
-    if image is not None:
-        cropped_pitcher = crop_utils.extract_person_crop(
-            image,
-            pitcher_data,
-            padding_percent=15,
-            draw_overlay=False
-        )
-        output_img = output_dir / f"{pitcher_frame_name}.jpg"
-        cv2.imwrite(str(output_img), cropped_pitcher)
+        if image is not None:
+            try:
+                cropped_pitcher = crop_utils.extract_person_crop(
+                    image,
+                    pitcher_data,
+                    padding_percent=15,
+                    draw_overlay=False
+                )
+                output_img = output_dir / f"{pitcher_frame_name}.jpg"
+                cv2.imwrite(str(output_img), cropped_pitcher)
+            except Exception as e:
+                print(f"Warning: Failed to save pitcher crop for {frame_name}: {e}")
 
 
 def get_frames_with_track_id(video_dir, track_id):
@@ -195,7 +194,7 @@ def get_arm_side(video_id, ground_truth_data, default='right'):
 
 
 def batch_label_frames_with_track_id(video_dir, track_id, pitcher_data_map, 
-                                     arm_side, processed_frames, force=False):
+                                     arm_side, processed_frames, force=False, output_subdir='pitcher_labels'):
     """
     Batch label all frames with a specific track_id.
     
@@ -206,6 +205,7 @@ def batch_label_frames_with_track_id(video_dir, track_id, pitcher_data_map,
         arm_side: 'left' or 'right' for pitcher's throwing arm
         processed_frames: Set of frames already labeled in this session (to skip)
         force: Whether to force reprocessing
+        output_subdir: Subdirectory to save to (default: 'pitcher_labels')
     
     Returns:
         Tuple of (labeled_count, no_pitcher_count) - only for newly labeled frames
@@ -220,16 +220,16 @@ def batch_label_frames_with_track_id(video_dir, track_id, pitcher_data_map,
         if pitcher_frame_name in processed_frames:
             continue
 
-        if not force and pose_utils.check_output_exists(video_dir, pitcher_frame_name, 'pitcher_labels'):
+        if not force and pose_utils.check_output_exists(video_dir, pitcher_frame_name, output_subdir):
             continue
 
         # Check if we have pitcher data for this frame
         if frame_path.name in pitcher_data_map:
             pitcher_data = pitcher_data_map[frame_path.name]
-            save_pitcher_label(video_dir, frame_path.name, pitcher_data, arm_side, track_id)
+            save_pitcher_label(video_dir, frame_path.name, pitcher_data, arm_side, track_id, output_subdir)
             labeled_count += 1
         else:
-            save_no_pitcher_label(video_dir, frame_path.name)
+            save_no_pitcher_label(video_dir, frame_path.name, output_subdir)
             no_pitcher_count += 1
 
     return labeled_count, no_pitcher_count

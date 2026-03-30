@@ -207,7 +207,7 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, processed_
 
             # Find pitcher track_id in this frame
             for person in batch_persons:
-                if person.get('track_id') == pitcher_track_id:
+                if person.get('track_id') == pitcher_track_id and pitcher_track_id is not None:
                     pitcher_data_map[batch_frame_path.name] = person
                     break
 
