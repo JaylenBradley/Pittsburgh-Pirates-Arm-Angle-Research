@@ -4,10 +4,11 @@ Auto Label Pitchers Script (CLIP-based) for Baseball Pitcher Pose Analysis with 
 This script automatically labels the pitcher for each video using YOLO pose detections.
 
 Per video, it:
-1. Finds the best frame with 4+ detected persons
-2. Scores candidates using CLIP with pitcher prompts
-3. Batch labels all frames with same track_id
-4. Marks remaining frames as "no pitcher"
+1. Scores ALL frames with CLIP (candidate persons detected by YOLO)
+2. Aggregates CLIP scores across frames by track_id using spatial priors
+3. Selects best track (highest aggregated score)
+4. Batch labels all frames with that track_id
+5. Marks frames missing the track as "no pitcher"
 
 Usage:
     python scripts/auto_label_pitchers.py [OPTIONS]
@@ -15,7 +16,7 @@ Usage:
 Examples:
     python scripts/auto_label_pitchers.py
     python scripts/auto_label_pitchers.py --force
-    python scripts/auto_label_pitchers.py --min-pitcher-score 0.25
+    python scripts/auto_label_pitchers.py --min-pitcher-score 0.20
 """
 
 import sys
@@ -25,48 +26,89 @@ from pathlib import Path
 import cv2
 
 from utils import pose_utils, label_utils
-from utils.auto_label_utils import CLIPPitcherSelector, build_candidates
+from utils.auto_label_utils import (
+    CLIPPitcherSelector, 
+    build_candidates, 
+    score_candidates_batch,
+    apply_spatial_prior,
+    aggregate_track_scores,
+    add_relative_padding
+)
 
 
-def find_best_frame(video_dir):
+def process_all_frames(video_dir, selector):
     """
-    Find the best frame for CLIP scoring (with 4+ detected persons, or most detections).
+    Score all release frames with CLIP and return aggregated track scores.
     
     Returns:
-        (frame_path, poses_data, num_persons) or (None, None, 0) if no valid frame
+        (frames_data, track_aggregates) where:
+        - frames_data: List of frame processing results
+        - track_aggregates: Dict of track_id -> aggregation info
     """
     release_frames = pose_utils.get_release_frames(video_dir)
-    best_frame = None
-    best_poses_data = None
-    best_num_persons = 0
+    frames_data = []
 
     for frame_path in release_frames:
-        poses_frame_name = pose_utils.format_frame_name(frame_path.name, 'yolo_poses')
+        frame_name = frame_path.name
+        poses_frame_name = pose_utils.format_frame_name(frame_name, 'yolo_poses')
         poses_json = video_dir / '_yolo_poses' / poses_frame_name / 'data.json'
 
         if not poses_json.exists():
             continue
 
+        # Load YOLO poses data
         poses_data = pose_utils.load_json(poses_json)
-        num_persons = len(poses_data.get('persons', []))
+        persons_data = poses_data.get('persons', [])
 
-        # Prefer frames with 4+ persons, otherwise take the one with most
-        if num_persons >= 4:
-            if best_num_persons < 4 or num_persons > best_num_persons:
-                best_frame = frame_path
-                best_poses_data = poses_data
-                best_num_persons = num_persons
-        elif best_num_persons < 4 and num_persons > best_num_persons:
-            best_frame = frame_path
-            best_poses_data = poses_data
-            best_num_persons = num_persons
+        if not persons_data:
+            frames_data.append({
+                'frame_name': frame_name,
+                'frame_path': frame_path,
+                'num_persons': 0,
+                'candidates_scored': []
+            })
+            continue
 
-    return best_frame, best_poses_data, best_num_persons
+        # Load frame image
+        frame_image = cv2.imread(str(frame_path))
+        if frame_image is None:
+            continue
+
+        # Build and score candidates
+        candidates = build_candidates(persons_data, frame_image, min_bbox_score=0.6)
+        if candidates:
+            candidates = score_candidates_batch(candidates, selector, frame_image.shape)
+            
+            # Compute bbox centers for spatial prior
+            bbox_centers = []
+            for candidate in candidates:
+                person = candidate['person']
+                bbox = person.get('bbox', {})
+                cx = (bbox.get('x1', 0) + bbox.get('x2', 0)) / 2
+                cy = (bbox.get('y1', 0) + bbox.get('y2', 0)) / 2
+                bbox_centers.append((cx, cy))
+            
+            # Apply spatial prior
+            scored_with_prior = apply_spatial_prior(candidates, bbox_centers, frame_image.shape)
+        else:
+            scored_with_prior = []
+
+        frames_data.append({
+            'frame_name': frame_name,
+            'frame_path': frame_path,
+            'num_persons': len(persons_data),
+            'candidates_scored': scored_with_prior
+        })
+
+    # Aggregate scores across all frames by track_id
+    track_aggregates = aggregate_track_scores(frames_data)
+
+    return frames_data, track_aggregates
 
 
 def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_score, force=False):
     """
-    Process a single video: find best frame with CLIP, batch label all frames with same track_id.
+    Process a single video: score all frames, aggregate tracks, batch label.
     
     Returns:
         Tuple of (success, message, num_labeled, num_no_pitcher)
@@ -76,47 +118,19 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
     if not release_frames:
         return False, "No frames in release_frames/", 0, 0
 
-    # Find best frame for CLIP scoring
-    best_frame, best_poses_data, num_persons = find_best_frame(video_dir)
+    # Score all frames and aggregate
+    frames_data, track_aggregates = process_all_frames(video_dir, selector)
 
-    if best_frame is None or best_poses_data is None:
-        return False, "No valid poses found for any frame", 0, 0
+    if not track_aggregates:
+        return False, "No tracks detected in any frame", 0, 0
 
-    if num_persons == 0:
-        return False, "No persons detected in best frame", 0, 0
-
-    # Load clean image for CLIP scoring
-    score_image = cv2.imread(str(best_frame))
-    if score_image is None:
-        return False, f"Failed to load best frame: {best_frame.name}", 0, 0
-
-    # Get arm side from ground truth
-    arm_side = label_utils.get_arm_side(video_id, ground_truth_data)
-
-    # Build filtered candidates from best frame, sorted by YOLO bbox confidence
-    persons_data = best_poses_data.get('persons', [])
-    candidates = build_candidates(
-        persons_data,
-        score_image,
-        min_bbox_score=0.6
+    # Find best track (highest aggregated adjusted score)
+    best_track_id = max(
+        track_aggregates.keys(),
+        key=lambda tid: track_aggregates[tid]['mean_adjusted_score']
     )
-
-    if not candidates:
-        return False, "No valid pitcher candidates after filtering", 0, 0
-
-    # Only show CLIP the top 4 highest-confidence detections
-    top_candidates = candidates[:4]
-    
-    # Score only top candidates with CLIP
-    for candidate in top_candidates:
-        candidate['pitcher_score'] = selector.score_pitcherness(candidate['crop'])
-        candidate['track_id'] = candidate['person'].get('track_id')
-
-    # Sort by CLIP score and take the best
-    top_candidates.sort(key=lambda c: c['pitcher_score'], reverse=True)
-    best_candidate = top_candidates[0]
-    best_score = best_candidate['pitcher_score']
-    pitcher_track_id = best_candidate['track_id']
+    best_track_info = track_aggregates[best_track_id]
+    best_score = best_track_info['mean_adjusted_score']
 
     # Check minimum score threshold
     if min_pitcher_score is not None and best_score < min_pitcher_score:
@@ -131,28 +145,58 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
 
         return True, f"All frames marked no pitcher (best_score={best_score:.4f} < {min_pitcher_score})", 0, num_no_pitcher
 
-    # Build pitcher_data_map for batch labeling
+    # Get arm side from ground truth
+    arm_side = label_utils.get_arm_side(video_id, ground_truth_data)
+
+    # Build pitcher_data_map: frame_name -> pitcher_person_data for frames containing best_track_id
     pitcher_data_map = {}
+    frames_with_track = set()
+    frames_without_track = set()
+
     for frame_path in release_frames:
-        poses_frame_name = pose_utils.format_frame_name(frame_path.name, 'yolo_poses')
+        frame_name = frame_path.name
+        poses_frame_name = pose_utils.format_frame_name(frame_name, 'yolo_poses')
         poses_json = video_dir / '_yolo_poses' / poses_frame_name / 'data.json'
 
         if poses_json.exists():
             poses_data = pose_utils.load_json(poses_json)
-            frame_persons = poses_data.get('persons', [])
+            persons_data = poses_data.get('persons', [])
 
-            # Find pitcher track_id in this frame
-            for person in frame_persons:
-                if person.get('track_id') == pitcher_track_id and pitcher_track_id is not None:
-                    pitcher_data_map[frame_path.name] = person
+            # Find best_track_id in this frame
+            found = False
+            for person in persons_data:
+                if person.get('track_id') == best_track_id:
+                    pitcher_data_map[frame_name] = person
+                    frames_with_track.add(frame_name)
+                    found = True
                     break
 
-    # Batch label all frames
-    labeled_count, no_pitcher_count = label_utils.batch_label_frames_with_track_id(
-        video_dir, pitcher_track_id, pitcher_data_map, arm_side, set(), force=force, output_subdir='pitcher_labels_auto'
-    )
+            if not found:
+                frames_without_track.add(frame_name)
+        else:
+            frames_without_track.add(frame_name)
 
-    return True, f"Labeled pitcher (track_id {pitcher_track_id}, score={best_score:.4f}), {labeled_count} frame(s)", labeled_count, no_pitcher_count
+    # Label frames with pitcher (has track_id)
+    labeled_count = 0
+    for frame_name in frames_with_track:
+        pitcher_frame_name = pose_utils.format_frame_name(frame_name, 'pitcher')
+        if force or not pose_utils.check_output_exists(video_dir, pitcher_frame_name, 'pitcher_labels_auto'):
+            person_data = pitcher_data_map[frame_name]
+            label_utils.save_pitcher_label(
+                video_dir, frame_name, person_data, arm_side, best_track_id,
+                output_subdir='pitcher_labels_auto'
+            )
+            labeled_count += 1
+
+    # Label frames without pitcher (no track_id)
+    no_pitcher_count = 0
+    for frame_name in frames_without_track:
+        pitcher_frame_name = pose_utils.format_frame_name(frame_name, 'pitcher')
+        if force or not pose_utils.check_output_exists(video_dir, pitcher_frame_name, 'pitcher_labels_auto'):
+            label_utils.save_no_pitcher_label(video_dir, frame_name, output_subdir='pitcher_labels_auto')
+            no_pitcher_count += 1
+
+    return True, f"Labeled pitcher (track_id {best_track_id}, score={best_score:.4f}), {labeled_count} pitcher, {no_pitcher_count} no-pitcher", labeled_count, no_pitcher_count
 
 
 def process_all_videos(baseball_vids_dir, ground_truth_data, selector, min_pitcher_score, force=False):
@@ -166,8 +210,7 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, selector, min_pitch
     print(f"\n{'=' * 60}")
     print('AUTO LABELING PITCHERS (CLIP + YOLO)')
     print(f"{'=' * 60}")
-    print(f'Found {len(video_dirs)} video(s)')
-    print()
+    print(f'Found {len(video_dirs)} video(s)\n')
 
     total_videos = len(video_dirs)
     total_labeled = 0
@@ -182,7 +225,7 @@ def process_all_videos(baseball_vids_dir, ground_truth_data, selector, min_pitch
             total_failed += 1
             continue
 
-        print(f'[{video_idx}/{total_videos}] {video_id}... ', end='')
+        print(f'[{video_idx}/{total_videos}] {video_id}... ', end='', flush=True)
 
         try:
             success, message, num_labeled, num_no_pitcher = process_video(
