@@ -13,7 +13,6 @@ It is model-agnostic and reused by auto_label_pitchers.py.
 
 import math
 import cv2
-import numpy as np
 
 
 class CLIPPitcherSelector:
@@ -288,3 +287,29 @@ def aggregate_track_scores(frames_data):
         }
     
     return aggregated
+
+
+def is_video_fully_processed(video_dir, output_subdir='pitcher_labels_auto'):
+    """
+    Check if all release frames are already labeled in the output directory.
+    
+    Args:
+        video_dir: Path to video directory
+        output_subdir: Subdirectory to check (default: 'pitcher_labels_auto')
+    
+    Returns:
+        True if all frames have labels, False if any frame needs processing
+    """
+    from . import pose_utils
+    
+    release_frames = pose_utils.get_release_frames(video_dir)
+    
+    if not release_frames:
+        return True  # No frames to process
+    
+    for frame_path in release_frames:
+        pitcher_frame_name = pose_utils.format_frame_name(frame_path.name, 'pitcher')
+        if not pose_utils.check_output_exists(video_dir, pitcher_frame_name, output_subdir):
+            return False  # Found a frame that needs labeling
+    
+    return True  # All frames already labeled

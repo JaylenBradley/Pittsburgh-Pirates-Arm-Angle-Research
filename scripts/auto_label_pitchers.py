@@ -32,7 +32,7 @@ from utils.auto_label_utils import (
     score_candidates_batch,
     apply_spatial_prior,
     aggregate_track_scores,
-    add_relative_padding
+    is_video_fully_processed
 )
 
 
@@ -118,6 +118,9 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
     if not release_frames:
         return False, "No frames in release_frames/", 0, 0
 
+    if not force and is_video_fully_processed(video_dir):
+        return True, "Video already processed", 0, 0
+
     # Score all frames and aggregate
     frames_data, track_aggregates = process_all_frames(video_dir, selector)
 
@@ -147,6 +150,24 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
 
     # Get arm side from ground truth
     arm_side = label_utils.get_arm_side(video_id, ground_truth_data)
+
+    # Build clip_selection data for all frames
+    # Reference spatial prior config from selector to avoid duplication
+    clip_selection = {
+        'aggregation_method': 'mean_across_frames',
+        'spatial_prior_enabled': True,
+        'spatial_prior_center_pct': [
+            selector.SPATIAL_PRIOR_CENTER_X,
+            selector.SPATIAL_PRIOR_CENTER_Y
+        ],
+        'spatial_prior_sigma': [
+            selector.SPATIAL_PRIOR_SIGMA_X,
+            selector.SPATIAL_PRIOR_SIGMA_Y
+        ],
+        'mean_base_score': float(best_track_info['mean_base_score']),
+        'mean_adjusted_score': float(best_track_info['mean_adjusted_score']),
+        'num_appearances': int(best_track_info['num_appearances'])
+    }
 
     # Build pitcher_data_map: frame_name -> pitcher_person_data for frames containing best_track_id
     pitcher_data_map = {}
@@ -184,6 +205,7 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
             person_data = pitcher_data_map[frame_name]
             label_utils.save_pitcher_label(
                 video_dir, frame_name, person_data, arm_side, best_track_id,
+                clip_selection=clip_selection,
                 output_subdir='pitcher_labels_auto'
             )
             labeled_count += 1

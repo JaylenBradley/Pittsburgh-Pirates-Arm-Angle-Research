@@ -48,7 +48,7 @@ def save_no_pitcher_label(video_dir, frame_name, output_subdir='pitcher_labels')
     pose_utils.save_json(output_data, output_dir / 'data.json')
 
 
-def extract_pitcher_output(person_data, frame_name, arm_side, track_id):
+def extract_pitcher_output(person_data, frame_name, arm_side, track_id, clip_selection=None):
     """
     Build pitcher_labels JSON payload compatible with downstream scripts.
     
@@ -57,6 +57,7 @@ def extract_pitcher_output(person_data, frame_name, arm_side, track_id):
         frame_name: Name of the frame file
         arm_side: 'left' or 'right'
         track_id: YOLO track ID of the pitcher
+        clip_selection: Optional dict with CLIP aggregation metrics
     
     Returns:
         Dictionary with pitcher data ready for JSON output
@@ -80,7 +81,7 @@ def extract_pitcher_output(person_data, frame_name, arm_side, track_id):
     elbow_key = f'{arm_side}_elbow'
     wrist_key = f'{arm_side}_wrist'
 
-    return {
+    output_data = {
         'frame': frame_name,
         'pitcher_detected': True,
         'pitcher_person_id': person_data.get('person_id'),
@@ -104,9 +105,15 @@ def extract_pitcher_output(person_data, frame_name, arm_side, track_id):
             'confidence': float(wrist[2])
         }
     }
+    
+    # Add CLIP aggregation data if provided
+    if clip_selection:
+        output_data['clip_selection'] = clip_selection
+    
+    return output_data
 
 
-def save_pitcher_label(video_dir, frame_name, pitcher_data, arm_side, track_id, output_subdir='pitcher_labels'):
+def save_pitcher_label(video_dir, frame_name, pitcher_data, arm_side, track_id, clip_selection=None, output_subdir='pitcher_labels'):
     """
     Save pitcher label data.
     
@@ -120,6 +127,7 @@ def save_pitcher_label(video_dir, frame_name, pitcher_data, arm_side, track_id, 
         pitcher_data: Person data dict from poses
         arm_side: 'left' or 'right' (from ground truth)
         track_id: YOLO track ID of the pitcher
+        clip_selection: Optional dict with CLIP aggregation metrics (for auto-labeling)
         output_subdir: Subdirectory to save to (default: 'pitcher_labels')
     """
     pitcher_frame_name = pose_utils.format_frame_name(frame_name, 'pitcher')
@@ -127,7 +135,7 @@ def save_pitcher_label(video_dir, frame_name, pitcher_data, arm_side, track_id, 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save JSON data
-    output_data = extract_pitcher_output(pitcher_data, frame_name, arm_side, track_id)
+    output_data = extract_pitcher_output(pitcher_data, frame_name, arm_side, track_id, clip_selection)
     pose_utils.save_json(output_data, output_dir / 'data.json')
 
     release_frame_path = video_dir / 'release_frames' / frame_name
