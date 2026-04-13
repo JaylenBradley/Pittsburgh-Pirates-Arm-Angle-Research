@@ -144,7 +144,7 @@ def process_frame(frame_path, video_dir, video_id, ground_truth_data, processed_
     poses_json = poses_dir / 'data.json'
 
     if not poses_json.exists():
-        return False, "Poses data not found - run process_release_frames.py first", False
+        return False, "Poses data not found - run process_release_frames_yolo.py first", False
 
     poses_data = pose_utils.load_json(poses_json)
     persons_data = poses_data.get('persons', [])

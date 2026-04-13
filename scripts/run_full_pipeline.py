@@ -2,8 +2,8 @@
 Run Full Pipeline Script for Baseball Pitcher Pose Analysis
 
 This master script runs the complete pitcher analysis pipeline in sequence:
-1. process_release_frames.py - Extract pose data from release frames
-2. label_pitchers.py - Interactive pitcher labeling
+1. process_release_frames_yolo.py - Extract pose data from release frames using YOLO
+2. auto_label_pitchers.py or label_pitchers.py - Pitcher labeling (automatic or manual)
 3. calculate_pitcher_angles.py - Calculate angles and errors
 4. generate_results_csv.py - Generate per-frame results CSV
 
@@ -16,6 +16,7 @@ Arguments:
     --csv PATH: Path to ground truth CSV (default: baseball_vids/arm_angles_high_speed.csv)
     --start-joint JOINT: Joint to start angle measurement (default: shoulder, options: shoulder, elbow, both)
     --device DEVICE: Device for inference (default: cpu)
+    --manual-label: Use manual interactive labeling instead of automatic (default: auto-label with CLIP)
     --force: Force reprocessing of all stages
     --skip-poses: Skip pose extraction stage (if already done)
     --skip-labeling: Skip pitcher labeling stage (if already done)
@@ -23,8 +24,11 @@ Arguments:
     --skip-csv: Skip CSV generation stage (if already done)
 
 Examples:
-    # Run full pipeline with defaults (shoulder-to-wrist)
+    # Run full pipeline with defaults (automatic CLIP-based labeling, shoulder-to-wrist)
     python scripts/run_full_pipeline.py
+
+    # Run with manual interactive labeling
+    python scripts/run_full_pipeline.py --manual-label
 
     # Run with elbow-to-wrist angles
     python scripts/run_full_pipeline.py --start-joint elbow
@@ -102,6 +106,11 @@ def main():
         help="Device for inference (default: cpu)"
     )
     parser.add_argument(
+        "--manual-label",
+        action="store_true",
+        help="Use manual interactive labeling instead of automatic (default: auto-label with CLIP)"
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Force reprocessing of all stages"
@@ -154,6 +163,7 @@ def main():
         sys.exit(1)
 
     # Print configuration
+    labeling_mode = "AUTOMATIC (CLIP-based)" if not args.manual_label else "MANUAL (Interactive)"
     print(f"\n{'=' * 50}")
     print(f"FULL PIPELINE CONFIGURATION")
     print(f"{'=' * 50}")
@@ -161,10 +171,11 @@ def main():
     print(f"Ground truth CSV: {csv_path}")
     print(f"Start joint: {args.start_joint}")
     print(f"Device: {args.device}")
+    print(f"Pitcher labeling mode: {labeling_mode}")
     print(f"Force reprocess: {args.force}")
     print(f"\nStages to run:")
-    print(f"  1. Pose extraction: {'SKIP' if args.skip_poses else 'RUN'}")
-    print(f"  2. Pitcher labeling: {'SKIP' if args.skip_labeling else 'RUN'}")
+    print(f"  1. Pose extraction: {'SKIP' if args.skip_poses else 'RUN (YOLO)'}")
+    print(f"  2. Pitcher labeling: {'SKIP' if args.skip_labeling else f'RUN ({labeling_mode})'}")
     print(f"  3. Angle calculation: {'SKIP' if args.skip_angles else 'RUN'}")
     print(f"  4. CSV generation: {'SKIP' if args.skip_csv else 'RUN'}")
     print(f"{'=' * 50}\n")
@@ -183,17 +194,17 @@ def main():
     success_count = 0
     total_stages = 4
 
-    # Stage 1: Process release frames
+    # Stage 1: Process release frames with YOLO
     if not args.skip_poses:
         cmd = [
             sys.executable,
-            str(scripts_dir / "process_release_frames.py"),
+            str(scripts_dir / "process_release_frames_yolo.py"),
             "--videos-dir", str(baseball_vids_dir),
         ]
         if args.force:
             cmd.append("--force")
 
-        if run_command(cmd, "STAGE 1: Pose Extraction"):
+        if run_command(cmd, "STAGE 1: Pose Extraction (YOLO)"):
             success_count += 1
         else:
             print("\n⚠ Pipeline halted due to error in Stage 1")
@@ -202,17 +213,24 @@ def main():
         print("\n⊘ Skipping Stage 1: Pose Extraction")
         total_stages -= 1
 
-    # Stage 2: Label pitchers
+    # Stage 2: Label pitchers (automatic or manual)
     if not args.skip_labeling:
+        if args.manual_label:
+            labeling_script = "label_pitchers.py"
+            stage_description = "STAGE 2: Pitcher Labeling (Manual - Interactive)"
+        else:
+            labeling_script = "auto_label_pitchers.py"
+            stage_description = "STAGE 2: Pitcher Labeling (Automatic - CLIP)"
+
         cmd = [
             sys.executable,
-            str(scripts_dir / "label_pitchers.py"),
+            str(scripts_dir / labeling_script),
             "--videos-dir", str(baseball_vids_dir),
         ]
         if args.force:
             cmd.append("--force")
 
-        if run_command(cmd, "STAGE 2: Pitcher Labeling"):
+        if run_command(cmd, stage_description):
             success_count += 1
         else:
             print("\n⚠ Pipeline halted due to error in Stage 2")
