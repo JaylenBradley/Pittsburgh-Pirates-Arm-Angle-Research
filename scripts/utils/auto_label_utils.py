@@ -33,7 +33,7 @@ class CLIPPitcherSelector:
     SPATIAL_PRIOR_CENTER_Y = 0.70     # Lower vertically (70% down)
     SPATIAL_PRIOR_SIGMA_X = 0.33      # 1/3 width
     SPATIAL_PRIOR_SIGMA_Y = 0.33      # 1/3 height
-    SPATIAL_PRIOR_WEIGHT = 1.0        # Weight relative to CLIP scores
+    SPATIAL_PRIOR_WEIGHT = 1.0
 
     def __init__(self, model_name='openai/clip-vit-base-patch32', device='auto',
                  pitcher_prompts=None):
@@ -52,12 +52,10 @@ class CLIPPitcherSelector:
         self.model = CLIPModel.from_pretrained(model_name).to(self.device)
         self.model.eval()
 
-        # Use provided prompts or default set
         if pitcher_prompts is None:
             pitcher_prompts = self.DEFAULT_PITCHER_PROMPTS
         self.pitcher_prompts = pitcher_prompts
 
-        # Cache text embeddings (computed once)
         self._pitcher_text_embedding = self._encode_pitcher_texts()
 
     def _resolve_device(self, device):
@@ -101,7 +99,7 @@ class CLIPPitcherSelector:
             
             # Inner product gives similarity in [-1, 1], map to [0, 1]
             score = float((image_features @ self._pitcher_text_embedding.T).item())
-            score = (score + 1.0) / 2.0  # Map [-1, 1] to [0, 1]
+            score = (score + 1.0) / 2.0
         
         return score
 
@@ -148,12 +146,10 @@ def build_candidates(persons_data, score_image, min_bbox_score):
         if not isinstance(bbox, dict):
             continue
 
-        # Check bbox score threshold
         bbox_score = float(bbox.get('score', 0.0))
         if bbox_score < min_bbox_score:
             continue
 
-        # Extract exact bbox crop (no padding) for CLIP
         x1, y1, x2, y2 = clamp_bbox_to_image(bbox, score_image.shape)
         if x2 <= x1 or y2 <= y1:
             continue
@@ -169,7 +165,7 @@ def build_candidates(persons_data, score_image, min_bbox_score):
             'crop': crop
         })
 
-    # Sort by YOLO bbox confidence (highest first)
+    # Sort by YOLO bbox confidence
     candidates.sort(key=lambda c: c['bbox_score'], reverse=True)
     
     return candidates
@@ -274,8 +270,7 @@ def aggregate_track_scores(frames_data):
                 'spatial_boost': scored['spatial_boost'],
                 'adjusted_score': scored['adjusted_score']
             })
-    
-    # Compute aggregated scores
+
     aggregated = {}
     for track_id, stats in track_stats.items():
         count = stats['count']

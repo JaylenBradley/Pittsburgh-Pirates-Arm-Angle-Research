@@ -69,16 +69,14 @@ def process_all_frames(video_dir, selector):
             })
             continue
 
-        # Load frame image
         frame_image = cv2.imread(str(frame_path))
         if frame_image is None:
             continue
 
-        # Build and score candidates
         candidates = build_candidates(persons_data, frame_image, min_bbox_score=0.6)
         if candidates:
             candidates = score_candidates_batch(candidates, selector, frame_image.shape)
-            
+
             # Compute bbox centers for spatial prior
             bbox_centers = []
             for candidate in candidates:
@@ -87,8 +85,7 @@ def process_all_frames(video_dir, selector):
                 cx = (bbox.get('x1', 0) + bbox.get('x2', 0)) / 2
                 cy = (bbox.get('y1', 0) + bbox.get('y2', 0)) / 2
                 bbox_centers.append((cx, cy))
-            
-            # Apply spatial prior
+
             scored_with_prior = apply_spatial_prior(candidates, bbox_centers, frame_image.shape)
         else:
             scored_with_prior = []
@@ -100,7 +97,6 @@ def process_all_frames(video_dir, selector):
             'candidates_scored': scored_with_prior
         })
 
-    # Aggregate scores across all frames by track_id
     track_aggregates = aggregate_track_scores(frames_data)
 
     return frames_data, track_aggregates
@@ -127,7 +123,6 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
     if not track_aggregates:
         return False, "No tracks detected in any frame", 0, 0
 
-    # Find best track (highest aggregated adjusted score)
     best_track_id = max(
         track_aggregates.keys(),
         key=lambda tid: track_aggregates[tid]['mean_adjusted_score']
@@ -135,7 +130,6 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
     best_track_info = track_aggregates[best_track_id]
     best_score = best_track_info['mean_adjusted_score']
 
-    # Check minimum score threshold
     if min_pitcher_score is not None and best_score < min_pitcher_score:
         # Mark entire video as no pitcher detected
         num_no_pitcher = 0
@@ -148,11 +142,8 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
 
         return True, f"All frames marked no pitcher (best_score={best_score:.4f} < {min_pitcher_score})", 0, num_no_pitcher
 
-    # Get arm side from ground truth
     arm_side = label_utils.get_arm_side(video_id, ground_truth_data)
 
-    # Build clip_selection data for all frames
-    # Reference spatial prior config from selector to avoid duplication
     clip_selection = {
         'aggregation_method': 'mean_across_frames',
         'spatial_prior_enabled': True,
@@ -169,7 +160,6 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
         'num_appearances': int(best_track_info['num_appearances'])
     }
 
-    # Build pitcher_data_map: frame_name -> pitcher_person_data for frames containing best_track_id
     pitcher_data_map = {}
     frames_with_track = set()
     frames_without_track = set()
@@ -183,7 +173,6 @@ def process_video(video_id, video_dir, ground_truth_data, selector, min_pitcher_
             poses_data = pose_utils.load_json(poses_json)
             persons_data = poses_data.get('persons', [])
 
-            # Find best_track_id in this frame
             found = False
             for person in persons_data:
                 if person.get('track_id') == best_track_id:
